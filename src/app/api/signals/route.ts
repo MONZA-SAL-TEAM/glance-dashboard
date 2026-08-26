@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cached } from "@/lib/cache";
 import { getPropertyMeta, resolvePropertyId } from "@/lib/properties";
 import { fetchSignals } from "@/lib/signals";
 import { siteDomainForProperty } from "@/lib/sites";
@@ -26,7 +27,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data = await fetchSignals(range, site);
+    const data = await cached(`signals:${site}:${range}`, 5 * 60_000, () =>
+      fetchSignals(range, site),
+    );
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
     });

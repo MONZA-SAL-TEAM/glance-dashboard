@@ -99,6 +99,35 @@ export interface SignalWeekRow {
   instagram: number;
 }
 
+export interface PortfolioSite {
+  propertyId: string;
+  alias: string;
+  name: string;
+  domain: string;
+  users: number;
+  prevUsers: number;
+  sessions: number;
+  signals: number;
+  prevSignals: number;
+  whatsapp: number;
+  instagram: number;
+  /** Signals ÷ users, as a percentage; null when users is 0. */
+  signalRate: number | null;
+  /** Daily users for the current window, oldest first. */
+  spark: number[];
+  /** Set when this site's GA fetch failed; the card renders the error. */
+  error?: string;
+}
+
+export interface PortfolioPayload {
+  range: DateRangeKey;
+  filter: TrafficFilter;
+  fetchedAt: string;
+  sites: PortfolioSite[];
+  /** Set when the signals source failed; cards then omit signal numbers. */
+  signalsError?: string;
+}
+
 export interface SignalsPayload {
   /** Site domain the signals were filtered to. */
   site: string;

@@ -37,12 +37,7 @@ function isoDay(date: Date): string {
   return format(date, "yyyy-MM-dd");
 }
 
-export async function fetchSignals(
-  range: DateRangeKey,
-  siteDomain: string,
-): Promise<SignalsPayload> {
-  const days = rangeDays(range);
-
+async function fetchSignalRows(days: number): Promise<SignalStatRow[]> {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/glance_signal_stats`, {
     method: "POST",
     headers: {
@@ -50,7 +45,7 @@ export async function fetchSignals(
       Authorization: `Bearer ${SUPABASE_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ p_days: days * 2 + 2 }),
+    body: JSON.stringify({ p_days: days }),
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
@@ -65,7 +60,57 @@ export async function fetchSignals(
     );
   }
 
-  const rows = (await res.json()) as SignalStatRow[];
+  return (await res.json()) as SignalStatRow[];
+}
+
+export interface SiteSignalTotals {
+  total: number;
+  whatsapp: number;
+  instagram: number;
+  previousTotal: number;
+}
+
+/**
+ * Signal totals for every site at once — one RPC call for the portfolio view.
+ * Windows mirror fetchSignals below.
+ */
+export async function fetchAllSiteSignalTotals(
+  range: DateRangeKey,
+): Promise<Map<string, SiteSignalTotals>> {
+  const days = rangeDays(range);
+  const rows = await fetchSignalRows(days * 2 + 2);
+
+  const today = new Date();
+  const currentStart = isoDay(subDays(today, days));
+  const previousStart = isoDay(subDays(today, days * 2 + 1));
+  const previousEnd = isoDay(subDays(today, days + 1));
+  const wanted = new Set(["whatsapp_click", "instagram_click"]);
+
+  const bySite = new Map<string, SiteSignalTotals>();
+  for (const row of rows) {
+    if (!wanted.has(row.event_type)) continue;
+    const n = Number(row.n) || 0;
+    const totals =
+      bySite.get(row.site) ??
+      ({ total: 0, whatsapp: 0, instagram: 0, previousTotal: 0 } as SiteSignalTotals);
+    if (row.day >= currentStart) {
+      totals.total += n;
+      if (row.event_type === "whatsapp_click") totals.whatsapp += n;
+      else totals.instagram += n;
+    } else if (row.day >= previousStart && row.day <= previousEnd) {
+      totals.previousTotal += n;
+    }
+    bySite.set(row.site, totals);
+  }
+  return bySite;
+}
+
+export async function fetchSignals(
+  range: DateRangeKey,
+  siteDomain: string,
+): Promise<SignalsPayload> {
+  const days = rangeDays(range);
+  const rows = await fetchSignalRows(days * 2 + 2);
 
   // Mirror GA's "NdaysAgo..today" window (N+1 days inclusive) and the
   // equally sized window immediately before it.

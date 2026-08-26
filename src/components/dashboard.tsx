@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { MetricTile } from "@/components/metric-tile";
+import { PortfolioPanel } from "@/components/portfolio-panel";
 import { RankList } from "@/components/rank-list";
 import { RealtimePanel } from "@/components/realtime-panel";
 import { SignalsPanel } from "@/components/signals-panel";
 import { SiteSwitcher } from "@/components/site-switcher";
 import { TrafficChart } from "@/components/traffic-chart";
+import { aliasToPropertyId, propertyIdToAlias } from "@/lib/sites";
 import {
   formatDelta,
   formatDuration,
@@ -17,6 +19,7 @@ import {
 import type {
   DateRangeKey,
   OverviewPayload,
+  PortfolioPayload,
   RealtimePayload,
   SignalsPayload,
   SiteProperty,
@@ -26,6 +29,9 @@ import type {
 const ranges: DateRangeKey[] = ["7d", "28d", "90d"];
 
 const FILTER_STORAGE_KEY = "glance_traffic_filter";
+
+/** Sentinel "site" for the all-sites portfolio home view. */
+const ALL_SITES = "all";
 
 export function Dashboard() {
   const [sites, setSites] = useState<SiteProperty[]>([]);
@@ -37,14 +43,20 @@ export function Dashboard() {
   const [overview, setOverview] = useState<OverviewPayload | null>(null);
   const [realtime, setRealtime] = useState<RealtimePayload | null>(null);
   const [signals, setSignals] = useState<SignalsPayload | null>(null);
+  const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [signalsError, setSignalsError] = useState<string | null>(null);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [sitesWarning, setSitesWarning] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingRealtime, setLoadingRealtime] = useState(true);
   const [loadingSignals, setLoadingSignals] = useState(true);
+  const [loadingPortfolio, setLoadingPortfolio] = useState(true);
+  // URL/storage params are adopted on mount; fetches wait for that to finish
+  // so the first render doesn't fire requests for state about to change.
+  const [ready, setReady] = useState(false);
 
   // A response only commits state if it is still the newest request of its
   // kind — otherwise a slow older fetch overwrites a faster newer one when
@@ -52,16 +64,59 @@ export function Dashboard() {
   const overviewSeq = useRef(0);
   const signalsSeq = useRef(0);
   const realtimeSeq = useRef(0);
+  const portfolioSeq = useRef(0);
 
+  // Adopt shareable URL state (?site=voyah&range=28d&filter=lb), falling back
+  // to the per-browser stored filter. Runs once; fetch effects wait on `ready`.
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(FILTER_STORAGE_KEY) === "all") {
-        setFilter("all");
+      const params = new URLSearchParams(window.location.search);
+      const siteParam = params.get("site");
+      const rangeParam = params.get("range");
+      const filterParam = params.get("filter");
+
+      if (siteParam && siteParam !== ALL_SITES) {
+        setPropertyId(aliasToPropertyId(siteParam) ?? siteParam);
+      } else {
+        setPropertyId(ALL_SITES);
+      }
+      if (rangeParam === "7d" || rangeParam === "28d" || rangeParam === "90d") {
+        setRange(rangeParam);
+      }
+      if (filterParam === "all" || filterParam === "lb") {
+        setFilter(filterParam);
+      } else {
+        // Storage can throw in private/blocked contexts — never let that
+        // undo the URL params already adopted above.
+        try {
+          if (window.localStorage.getItem(FILTER_STORAGE_KEY) === "all") {
+            setFilter("all");
+          }
+        } catch {
+          // per-browser convenience only
+        }
       }
     } catch {
-      // per-browser convenience only
+      setPropertyId(ALL_SITES);
     }
+    setReady(true);
   }, []);
+
+  // Keep the URL in sync so any view can be bookmarked or sent to someone.
+  useEffect(() => {
+    if (!ready || !propertyId) return;
+    try {
+      const site =
+        propertyId === ALL_SITES ? ALL_SITES : propertyIdToAlias(propertyId);
+      window.history.replaceState(
+        null,
+        "",
+        `?site=${encodeURIComponent(site)}&range=${range}&filter=${filter}`,
+      );
+    } catch {
+      // URL sync is a convenience, never fatal
+    }
+  }, [ready, propertyId, range, filter]);
 
   useEffect(() => {
     void (async () => {
@@ -72,10 +127,8 @@ export function Dashboard() {
           warning?: string;
           error?: string;
         };
-        const list = data.properties ?? [];
-        setSites(list);
+        setSites(data.properties ?? []);
         setSitesWarning(data.warning ?? data.error ?? null);
-        setPropertyId((current) => current || list[0]?.id || "");
       } catch {
         setError("Could not load websites list");
       }
@@ -183,20 +236,59 @@ export function Dashboard() {
     [],
   );
 
+  const loadPortfolio = useCallback(
+    async (nextRange: DateRangeKey, nextFilter: TrafficFilter) => {
+      const seq = ++portfolioSeq.current;
+      setLoadingPortfolio(true);
+      try {
+        const res = await fetch(
+          `/api/portfolio?range=${nextRange}&filter=${nextFilter}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error || `Portfolio failed (${res.status})`);
+        }
+        const data = (await res.json()) as PortfolioPayload;
+        if (seq !== portfolioSeq.current) return;
+        setPortfolio(data);
+        setPortfolioError(null);
+      } catch (err) {
+        if (seq !== portfolioSeq.current) return;
+        setPortfolio(null);
+        setPortfolioError(
+          err instanceof Error ? err.message : "Portfolio unavailable",
+        );
+      } finally {
+        if (seq === portfolioSeq.current) setLoadingPortfolio(false);
+      }
+    },
+    [],
+  );
+
+  const isPortfolio = propertyId === ALL_SITES;
+
   useEffect(() => {
-    if (!propertyId) return;
+    if (!ready || !propertyId || propertyId === ALL_SITES) return;
     startTransition(() => {
       void loadOverview(range, propertyId, filter);
     });
-  }, [range, propertyId, filter, loadOverview]);
+  }, [ready, range, propertyId, filter, loadOverview]);
 
   useEffect(() => {
-    if (!propertyId) return;
+    if (!ready || !propertyId || propertyId === ALL_SITES) return;
     void loadSignals(range, propertyId);
-  }, [range, propertyId, loadSignals]);
+  }, [ready, range, propertyId, loadSignals]);
 
   useEffect(() => {
-    if (!propertyId) return;
+    if (!ready || propertyId !== ALL_SITES) return;
+    startTransition(() => {
+      void loadPortfolio(range, filter);
+    });
+  }, [ready, propertyId, range, filter, loadPortfolio]);
+
+  useEffect(() => {
+    if (!ready || !propertyId || propertyId === ALL_SITES) return;
 
     let cancelled = false;
     const tick = () => {
@@ -212,15 +304,20 @@ export function Dashboard() {
       window.clearTimeout(first);
       window.clearInterval(id);
     };
-  }, [propertyId, loadRealtime]);
+  }, [ready, propertyId, loadRealtime]);
 
   const metrics = overview?.overview;
   const previous = overview?.previous ?? null;
-  const activeSite =
-    sites.find((s) => s.id === propertyId) ||
-    (overview
-      ? { id: overview.propertyId, name: overview.propertyName }
-      : null);
+  const switcherSites: SiteProperty[] = [
+    { id: ALL_SITES, name: "All sites", url: "portfolio" },
+    ...sites,
+  ];
+  const activeSite = isPortfolio
+    ? { id: ALL_SITES, name: "All sites" }
+    : sites.find((s) => s.id === propertyId) ||
+      (overview
+        ? { id: overview.propertyId, name: overview.propertyName }
+        : null);
 
   const signalRate =
     signals && metrics && metrics.users > 0
@@ -251,7 +348,7 @@ export function Dashboard() {
         <div className="flex w-full flex-col gap-3 sm:w-auto sm:items-end">
           <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
             <SiteSwitcher
-              sites={sites}
+              sites={switcherSites}
               value={propertyId}
               onChange={(id) => {
                 setOverview(null);
@@ -327,6 +424,24 @@ export function Dashboard() {
         </div>
       ) : null}
 
+      {isPortfolio ? (
+        <PortfolioPanel
+          data={
+            portfolio && portfolio.range === range && portfolio.filter === filter
+              ? portfolio
+              : null
+          }
+          loading={loadingPortfolio}
+          error={portfolioError}
+          onOpenSite={(id) => {
+            setOverview(null);
+            setRealtime(null);
+            setSignals(null);
+            setPropertyId(id);
+          }}
+        />
+      ) : (
+        <>
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <RealtimePanel
           data={realtime}
@@ -506,21 +621,33 @@ export function Dashboard() {
           </ul>
         </section>
       </div>
+        </>
+      )}
 
       <footer className="mt-8 flex flex-col gap-2 text-xs leading-relaxed text-ink-soft sm:mt-10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
         <p>
-          {loadingOverview || isPending
-            ? "Refreshing live data…"
-            : overview?.fetchedAt
-              ? `Updated ${new Date(overview.fetchedAt).toLocaleString()} · ${
-                  filter === "lb" ? "Lebanon traffic" : "all traffic"
-                }`
-              : "Ready"}
+          {isPortfolio
+            ? loadingPortfolio || isPending
+              ? "Refreshing live data…"
+              : portfolio?.fetchedAt
+                ? `Updated ${new Date(portfolio.fetchedAt).toLocaleString()} · ${
+                    filter === "lb" ? "Lebanon traffic" : "all traffic"
+                  }`
+                : "Ready"
+            : loadingOverview || isPending
+              ? "Refreshing live data…"
+              : overview?.fetchedAt
+                ? `Updated ${new Date(overview.fetchedAt).toLocaleString()} · ${
+                    filter === "lb" ? "Lebanon traffic" : "all traffic"
+                  }`
+                : "Ready"}
         </p>
         <p className="sm:text-right">
-          {activeSite
-            ? `${activeSite.name} · property ${activeSite.id}`
-            : "Select a website"}
+          {isPortfolio
+            ? "All sites · portfolio view"
+            : activeSite
+              ? `${activeSite.name} · property ${activeSite.id}`
+              : "Select a website"}
         </p>
       </footer>
     </div>

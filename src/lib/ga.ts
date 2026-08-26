@@ -26,7 +26,7 @@ function rangeDays(range: DateRangeKey): number {
 }
 
 /** Current window and the equally sized window immediately before it. */
-function dateRangesFor(range: DateRangeKey) {
+export function dateRangesFor(range: DateRangeKey) {
   const days = rangeDays(range);
   return {
     current: { startDate: `${days}daysAgo`, endDate: "today" },
@@ -41,7 +41,7 @@ function dateRangesFor(range: DateRangeKey) {
  * The Lebanon filter is the "real traffic" view: monzasal.com shows roughly
  * half its users from Singapore-based crawlers, so raw totals mislead.
  */
-function geoFilterFor(filter: TrafficFilter) {
+export function geoFilterFor(filter: TrafficFilter) {
   if (filter !== "lb") return {};
   return {
     dimensionFilter: {
@@ -53,13 +53,13 @@ function geoFilterFor(filter: TrafficFilter) {
   };
 }
 
-function getClient() {
+export function getClient() {
   return new BetaAnalyticsDataClient({
     credentials: getGoogleCredentials(),
   });
 }
 
-function propertyPath(propertyId: string) {
+export function propertyPath(propertyId: string) {
   return `properties/${propertyId}`;
 }
 
@@ -68,11 +68,11 @@ type ReportRow = {
   metricValues?: Array<{ value?: string | null }> | null;
 };
 
-function metricNumber(row: ReportRow | undefined, index: number) {
+export function metricNumber(row: ReportRow | undefined, index: number) {
   return Number(row?.metricValues?.[index]?.value ?? 0);
 }
 
-function dimensionValue(row: ReportRow | undefined, index: number) {
+export function dimensionValue(row: ReportRow | undefined, index: number) {
   return row?.dimensionValues?.[index]?.value ?? "";
 }
 

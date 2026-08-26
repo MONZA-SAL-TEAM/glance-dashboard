@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cached } from "@/lib/cache";
-import { fetchOverview } from "@/lib/ga";
+import { fetchPortfolio } from "@/lib/portfolio";
 import type { DateRangeKey, TrafficFilter } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -17,18 +17,16 @@ function parseFilter(value: string | null): TrafficFilter {
 export async function GET(request: NextRequest) {
   try {
     const range = parseRange(request.nextUrl.searchParams.get("range"));
-    const property = request.nextUrl.searchParams.get("property");
     const filter = parseFilter(request.nextUrl.searchParams.get("filter"));
-    const data = await cached(
-      `overview:${property ?? "default"}:${range}:${filter}`,
-      10 * 60_000,
-      () => fetchOverview(range, property, filter),
+    const data = await cached(`portfolio:${range}:${filter}`, 10 * 60_000, () =>
+      fetchPortfolio(range, filter),
     );
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load analytics";
+    const message =
+      error instanceof Error ? error.message : "Failed to load portfolio";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
