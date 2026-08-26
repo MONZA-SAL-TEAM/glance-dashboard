@@ -8,6 +8,10 @@ export function middleware(request: NextRequest) {
   if (
     pathname === "/login" ||
     pathname.startsWith("/api/auth") ||
+    // Scheduled jobs authenticate themselves (CRON_SECRET bearer or an
+    // already-authed dashboard cookie) — see src/lib/cron-auth.ts.
+    pathname === "/api/health/run" ||
+    pathname === "/api/digest/run" ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico"
   ) {

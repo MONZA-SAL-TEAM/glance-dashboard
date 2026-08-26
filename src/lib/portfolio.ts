@@ -1,4 +1,5 @@
 import { format, subDays } from "date-fns";
+import { cached } from "./cache";
 import {
   dateRangesFor,
   dimensionValue,
@@ -7,13 +8,16 @@ import {
   metricNumber,
   propertyPath,
 } from "./ga";
-import { fetchAllSiteSignalTotals } from "./signals";
+import { runHealthChecks } from "./health";
+import { fetchSignalOverview } from "./signals";
 import { KNOWN_SITES, PORTFOLIO_ORDER } from "./sites";
-import type {
-  DateRangeKey,
-  PortfolioPayload,
-  PortfolioSite,
-  TrafficFilter,
+import {
+  emptyBreakdown,
+  type DateRangeKey,
+  type HealthPayload,
+  type PortfolioPayload,
+  type PortfolioSite,
+  type TrafficFilter,
 } from "./types";
 
 function rangeDays(range: DateRangeKey): number {
@@ -24,11 +28,25 @@ function rangeDays(range: DateRangeKey): number {
 
 const PROPERTY_TIMEZONE = "Asia/Beirut";
 
+export function getCachedHealth(): Promise<HealthPayload> {
+  return cached("health:full", 15 * 60_000, runHealthChecks);
+}
+
+/** Health for the portfolio: served from cache, never allowed to block the
+ * page — if a fresh run is still in flight past the deadline the cards show
+ * "checking…" and the next request hits the warm cache. */
+function healthWithDeadline(ms: number): Promise<HealthPayload | null> {
+  return Promise.race([
+    getCachedHealth().catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 /**
  * The three-site home screen: per property, one summary report (current +
  * previous window) and one daily-users report for the sparkline, plus a single
- * Supabase call shared by all cards. Sites fail independently — one property's
- * GA error must not blank the other two cards.
+ * Supabase call shared by all cards (totals + all-sites demand). Sites fail
+ * independently — one property's GA error must not blank the other two cards.
  */
 export async function fetchPortfolio(
   range: DateRangeKey,
@@ -48,10 +66,10 @@ export async function fetchPortfolio(
   const geoFilter = geoFilterFor(filter);
   const days = rangeDays(range);
 
-  const signalsPromise = fetchAllSiteSignalTotals(range).then(
-    (totals) => ({ totals, error: undefined as string | undefined }),
+  const signalsPromise = fetchSignalOverview(range).then(
+    (overview) => ({ overview, error: undefined as string | undefined }),
     (error) => ({
-      totals: new Map() as Awaited<ReturnType<typeof fetchAllSiteSignalTotals>>,
+      overview: null,
       error: error instanceof Error ? error.message : "Signals unavailable",
     }),
   );
@@ -68,11 +86,12 @@ export async function fetchPortfolio(
       prevUsers: 0,
       sessions: 0,
       signals: 0,
+      highIntent: 0,
       prevSignals: 0,
-      whatsapp: 0,
-      instagram: 0,
+      byType: emptyBreakdown(),
       signalRate: null,
       spark: [],
+      health: null,
     };
 
     try {
@@ -132,20 +151,26 @@ export async function fetchPortfolio(
     return base;
   });
 
-  const [sites, signalsResult] = await Promise.all([
+  const [sites, signalsResult, health] = await Promise.all([
     Promise.all(sitePromises),
     signalsPromise,
+    healthWithDeadline(3500),
   ]);
 
   for (const site of sites) {
-    const totals = signalsResult.totals.get(site.domain);
-    if (!totals) continue;
-    site.signals = totals.total;
-    site.whatsapp = totals.whatsapp;
-    site.instagram = totals.instagram;
-    site.prevSignals = totals.previousTotal;
-    site.signalRate =
-      !site.error && site.users > 0 ? (totals.total / site.users) * 100 : null;
+    const totals = signalsResult.overview?.totalsBySite.get(site.domain);
+    if (totals) {
+      site.signals = totals.total;
+      site.highIntent = totals.highIntent;
+      site.byType = totals.byType;
+      site.prevSignals = totals.previousTotal;
+      site.signalRate =
+        !site.error && site.users > 0
+          ? (totals.total / site.users) * 100
+          : null;
+    }
+    site.health =
+      health?.sites.find((h) => h.site === site.domain) ?? null;
   }
 
   return {
@@ -153,6 +178,8 @@ export async function fetchPortfolio(
     filter,
     fetchedAt: new Date().toISOString(),
     sites,
+    demand: signalsResult.overview?.demand ?? [],
     signalsError: signalsResult.error,
+    healthError: health ? undefined : "health check still running",
   };
 }
