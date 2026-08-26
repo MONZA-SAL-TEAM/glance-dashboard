@@ -59,10 +59,10 @@ export function RealtimePanel({ data, loading, error }: RealtimePanelProps) {
           <ul className="space-y-2">
             {(data?.byCountry ?? []).slice(0, 4).map((country) => (
               <li
-                key={country.country}
+                key={country.name}
                 className="flex items-start justify-between gap-3 text-sm"
               >
-                <span className="min-w-0 flex-1 truncate text-ink">{country.country}</span>
+                <span className="min-w-0 flex-1 truncate text-ink">{country.name}</span>
                 <span className="shrink-0 tabular-nums text-ink-soft">{country.users}</span>
               </li>
             ))}

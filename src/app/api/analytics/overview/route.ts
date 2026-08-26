@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchOverview } from "@/lib/ga";
-import type { DateRangeKey } from "@/lib/types";
+import type { DateRangeKey, TrafficFilter } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -9,11 +9,16 @@ function parseRange(value: string | null): DateRangeKey {
   return "28d";
 }
 
+function parseFilter(value: string | null): TrafficFilter {
+  return value === "all" ? "all" : "lb";
+}
+
 export async function GET(request: NextRequest) {
   try {
     const range = parseRange(request.nextUrl.searchParams.get("range"));
     const property = request.nextUrl.searchParams.get("property");
-    const data = await fetchOverview(range, property);
+    const filter = parseFilter(request.nextUrl.searchParams.get("filter"));
+    const data = await fetchOverview(range, property, filter);
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
     });

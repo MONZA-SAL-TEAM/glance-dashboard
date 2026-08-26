@@ -83,8 +83,21 @@ export function TrafficChart({ data }: TrafficChartProps) {
               labelFormatter={(label) => formatChartDate(String(label))}
               formatter={(value, name) => [
                 formatNumber(Number(value ?? 0)),
-                name === "users" ? "Users" : "Sessions",
+                name === "users"
+                  ? "Users"
+                  : name === "sessions"
+                    ? "Sessions"
+                    : "Previous period",
               ]}
+            />
+            <Area
+              type="monotone"
+              dataKey="prevUsers"
+              stroke="#9aacb8"
+              strokeWidth={1.5}
+              fill="transparent"
+              strokeDasharray="2 4"
+              animationDuration={700}
             />
             <Area
               type="monotone"
@@ -112,6 +125,10 @@ export function TrafficChart({ data }: TrafficChartProps) {
         </span>
         <span className="inline-flex items-center gap-2">
           <span className="h-2 w-5 border-t-2 border-dashed border-coral" /> Sessions
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="h-2 w-5 border-t-2 border-dotted border-[#9aacb8]" /> Users,
+          previous period
         </span>
       </div>
     </div>

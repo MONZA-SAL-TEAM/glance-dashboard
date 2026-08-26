@@ -1,5 +1,6 @@
 import { AnalyticsAdminServiceClient } from "@google-analytics/admin";
 import { getGoogleCredentials } from "./google-credentials";
+import { KNOWN_SITES } from "./sites";
 
 export interface SiteProperty {
   id: string;
@@ -100,6 +101,14 @@ function mergeProperties(
       name: property.name || existing?.name || property.id,
       url: property.url ?? existing?.url,
     });
+  }
+
+  // Known Monza properties get pinned labels — the env/discovery names have
+  // drifted (duplicates, url fragments) and the switcher must read cleanly.
+  for (const [id, site] of Object.entries(KNOWN_SITES)) {
+    if (byId.has(id)) {
+      byId.set(id, { id, name: site.name, url: site.domain });
+    }
   }
 
   return [...byId.values()].sort((a, b) =>
