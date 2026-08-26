@@ -1,4 +1,4 @@
-import { dateRangesFor, getClient, metricNumber, propertyPath } from "./ga";
+import { dateRangesFor, geoFilterFor, getClient, metricNumber, propertyPath } from "./ga";
 import { fetchSignalOverview, supabaseRpc } from "./signals";
 import { KNOWN_SITES, PORTFOLIO_ORDER } from "./sites";
 import type {
@@ -93,7 +93,7 @@ const SITE_SPECS: SiteSpec[] = [
   },
 ];
 
-async function fetchText(url: string): Promise<{ status: number; text: string }> {
+async function fetchOnce(url: string): Promise<{ status: number; text: string }> {
   try {
     const res = await fetch(url, {
       cache: "no-store",
@@ -106,6 +106,15 @@ async function fetchText(url: string): Promise<{ status: number; text: string }>
   } catch {
     return { status: 0, text: "" };
   }
+}
+
+/** One retry on pure network failure — a single blip must not record a
+ * critical day in health history. */
+async function fetchText(url: string): Promise<{ status: number; text: string }> {
+  const first = await fetchOnce(url);
+  if (first.status !== 0) return first;
+  await new Promise((r) => setTimeout(r, 800));
+  return fetchOnce(url);
 }
 
 function matches(haystack: string, marker: string | RegExp): boolean {
@@ -238,6 +247,9 @@ async function freshnessChecks(): Promise<Map<string, HealthCheck[]>> {
         {
           name: "signals source reachable",
           ok: false,
+          // A monitoring-datasource blip is evidence about Supabase, not the
+          // site — warning, never critical.
+          soft: true,
           detail:
             error instanceof Error ? error.message : "signals query failed",
         },
@@ -256,6 +268,9 @@ async function freshnessChecks(): Promise<Map<string, HealthCheck[]>> {
           property: propertyPath(propertyId),
           dateRanges: [current],
           metrics: [{ name: "totalUsers" }],
+          // Real traffic only — monzasal.com's raw numbers are ~half crawler
+          // noise, which never produces signals and would trip false alarms.
+          ...geoFilterFor("lb"),
         });
         return [propertyId, metricNumber(res[0].rows?.[0], 0)] as const;
       }),

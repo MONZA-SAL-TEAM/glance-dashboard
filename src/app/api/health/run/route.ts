@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { prime } from "@/lib/cache";
 import { isAuthorizedJob } from "@/lib/cron-auth";
 import { runHealthChecks } from "@/lib/health";
 
@@ -8,11 +9,14 @@ export const maxDuration = 60;
 /** Scheduled (or manually triggered) fresh health run that records history.
  * Not behind the password middleware — it authenticates itself. */
 async function handle(request: NextRequest) {
-  if (!isAuthorizedJob(request)) {
+  if (!(await isAuthorizedJob(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
     const health = await runHealthChecks();
+    // Same-instance dashboards should see this fresh run immediately instead
+    // of a stale cached one.
+    prime("health:full", 15 * 60_000, health);
     return NextResponse.json(
       {
         ranAt: health.fetchedAt,

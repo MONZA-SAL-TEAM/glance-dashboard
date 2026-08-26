@@ -102,7 +102,12 @@ export interface SignalOverview {
 
 function windowBounds(range: DateRangeKey) {
   const days = rangeDays(range);
-  const today = new Date();
+  // Anchor to the property timezone (like ga.ts) so the signals window and
+  // GA's "NdaysAgo..today" window roll to a new day at the same moment.
+  const todayIso = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Beirut",
+  }).format(new Date());
+  const today = new Date(`${todayIso}T00:00:00`);
   return {
     days,
     currentStart: isoDay(subDays(today, days)),
@@ -142,12 +147,16 @@ export async function fetchSignalOverview(
       totals.byType[row.event_type] += n;
       if (HIGH_INTENT_TYPES.includes(row.event_type)) totals.highIntent += n;
 
-      const demand =
-        demandByVehicle.get(row.vehicle) ??
-        ({ vehicle: row.vehicle, total: 0, bySite: {} } as DemandRow);
-      demand.total += n;
-      demand.bySite[row.site] = (demand.bySite[row.site] ?? 0) + n;
-      demandByVehicle.set(row.vehicle, demand);
+      // Untagged signals count toward totals but not the demand board —
+      // "unspecified" is not a vehicle and would otherwise rank first.
+      if (row.vehicle !== "unspecified") {
+        const demand =
+          demandByVehicle.get(row.vehicle) ??
+          ({ vehicle: row.vehicle, total: 0, bySite: {} } as DemandRow);
+        demand.total += n;
+        demand.bySite[row.site] = (demand.bySite[row.site] ?? 0) + n;
+        demandByVehicle.set(row.vehicle, demand);
+      }
     } else if (row.day >= previousStart && row.day <= previousEnd) {
       totals.previousTotal += n;
     }

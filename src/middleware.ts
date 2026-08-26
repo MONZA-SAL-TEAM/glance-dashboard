@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAuthCookieValid } from "@/lib/auth-token";
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const password = process.env.DASHBOARD_PASSWORD;
   if (!password) return NextResponse.next();
 
@@ -8,8 +9,8 @@ export function middleware(request: NextRequest) {
   if (
     pathname === "/login" ||
     pathname.startsWith("/api/auth") ||
-    // Scheduled jobs authenticate themselves (CRON_SECRET bearer or an
-    // already-authed dashboard cookie) — see src/lib/cron-auth.ts.
+    // Scheduled jobs authenticate themselves (CRON_SECRET bearer or a valid
+    // dashboard cookie) — see src/lib/cron-auth.ts.
     pathname === "/api/health/run" ||
     pathname === "/api/digest/run" ||
     pathname.startsWith("/_next") ||
@@ -18,7 +19,9 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const authed = request.cookies.get("glance_auth")?.value === "1";
+  const authed = await isAuthCookieValid(
+    request.cookies.get("glance_auth")?.value,
+  );
   if (authed) return NextResponse.next();
 
   if (pathname.startsWith("/api/")) {

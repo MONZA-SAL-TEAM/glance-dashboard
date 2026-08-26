@@ -264,6 +264,8 @@ export interface DigestSiteSummary {
   prevSignals: number;
   signalRate: number | null;
   topModel: string | null;
+  /** Set when GA failed for this site — user counts are then unknown, not 0. */
+  gaError?: string;
 }
 
 export interface DigestPayload {

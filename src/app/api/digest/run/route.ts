@@ -9,7 +9,7 @@ export const maxDuration = 60;
  * and emails it when the email provider is configured; the build result is
  * returned either way so the run is auditable. */
 async function handle(request: NextRequest) {
-  if (!isAuthorizedJob(request)) {
+  if (!(await isAuthorizedJob(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {

@@ -1,4 +1,4 @@
-import { format, startOfWeek } from "date-fns";
+import { format, startOfWeek, subDays } from "date-fns";
 import { cached } from "./cache";
 import { fetchDeadUrls } from "./deadurls";
 import { fetchPortfolio, getCachedHealth } from "./portfolio";
@@ -20,11 +20,21 @@ function pct(current: number, previous: number): string | null {
 export async function buildDigest(): Promise<DigestPayload> {
   const [portfolio, health, deadUrls] = await Promise.all([
     fetchPortfolio("7d", "lb"),
-    getCachedHealth().catch(() => null),
+    // Health is best-effort with a hard deadline: a cold health run must not
+    // push the whole digest job past its execution limit.
+    Promise.race([
+      getCachedHealth().catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+    ]),
     cached("deadurls:7d", 15 * 60_000, () => fetchDeadUrls("7d")).catch(
       () => null,
     ),
   ]);
+
+  const topModelFor = (domain: string): string | null =>
+    [...portfolio.demand]
+      .sort((a, b) => (b.bySite[domain] ?? 0) - (a.bySite[domain] ?? 0))
+      .find((d) => (d.bySite[domain] ?? 0) > 0)?.vehicle ?? null;
 
   const sites: DigestSiteSummary[] = portfolio.sites.map((s) => ({
     name: s.name,
@@ -34,15 +44,17 @@ export async function buildDigest(): Promise<DigestPayload> {
     signals: s.signals,
     prevSignals: s.prevSignals,
     signalRate: s.signalRate,
-    topModel:
-      portfolio.demand.find((d) => (d.bySite[s.domain] ?? 0) > 0)?.vehicle ??
-      null,
+    topModel: topModelFor(s.domain),
+    gaError: s.error,
   }));
 
+  const gaOkSites = sites.filter((s) => !s.gaError);
   const totals = {
-    users: sites.reduce((a, s) => a + s.users, 0),
-    prevUsers: sites.reduce((a, s) => a + s.prevUsers, 0),
-    sessions: portfolio.sites.reduce((a, s) => a + s.sessions, 0),
+    users: gaOkSites.reduce((a, s) => a + s.users, 0),
+    prevUsers: gaOkSites.reduce((a, s) => a + s.prevUsers, 0),
+    sessions: portfolio.sites
+      .filter((s) => !s.error)
+      .reduce((a, s) => a + s.sessions, 0),
     signals: sites.reduce((a, s) => a + s.signals, 0),
     prevSignals: sites.reduce((a, s) => a + s.prevSignals, 0),
   };
@@ -53,6 +65,11 @@ export async function buildDigest(): Promise<DigestPayload> {
       healthWarnings.push(`${site.site}: ${site.summary}`);
     }
   }
+  for (const s of sites) {
+    if (s.gaError) {
+      healthWarnings.push(`${s.name}: GA query failed (${s.gaError}) — user counts unavailable`);
+    }
+  }
   if (portfolio.signalsError) {
     healthWarnings.push(`Signals source: ${portfolio.signalsError}`);
   }
@@ -61,10 +78,17 @@ export async function buildDigest(): Promise<DigestPayload> {
 
   const insights: string[] = [];
   const totalDelta = pct(totals.users, totals.prevUsers);
-  if (totalDelta) insights.push(`Visitors ${totalDelta} vs last week (${totals.users} across all sites, Lebanon traffic).`);
+  if (totalDelta && gaOkSites.length === sites.length) {
+    insights.push(`Visitors ${totalDelta} vs last week (${totals.users} across all sites, Lebanon traffic).`);
+  } else if (gaOkSites.length < sites.length) {
+    insights.push(
+      `GA data unavailable for ${sites.length - gaOkSites.length} of ${sites.length} sites — traffic totals below are partial.`,
+    );
+  }
   const signalsDelta = pct(totals.signals, totals.prevSignals);
   if (signalsDelta) insights.push(`Intent signals ${signalsDelta} vs last week (${totals.signals} total).`);
   for (const s of sites) {
+    if (s.gaError) continue;
     const d = pct(s.users, s.prevUsers);
     if (d && Math.abs(((s.users - s.prevUsers) / Math.max(s.prevUsers, 1)) * 100) >= 15 && s.prevUsers >= 20) {
       insights.push(`${s.name} traffic ${d} (${s.prevUsers} → ${s.users} users).`);
@@ -93,9 +117,12 @@ export async function buildDigest(): Promise<DigestPayload> {
     );
   }
 
+  // The trailing-7-day GA window is essentially the PREVIOUS week when the
+  // Monday-morning cron fires — label the digest with the week it reports.
   const monday = startOfWeek(new Date(), { weekStartsOn: 1 });
+  const reportedMonday = subDays(monday, 7);
   return {
-    weekOf: format(monday, "yyyy-MM-dd"),
+    weekOf: format(reportedMonday, "yyyy-MM-dd"),
     generatedAt: new Date().toISOString(),
     totals,
     sites,
@@ -120,7 +147,7 @@ export function renderDigestText(d: DigestPayload): string {
   lines.push("");
   for (const s of d.sites) {
     lines.push(
-      `${s.name}: ${s.users} users · ${s.signals} signals` +
+      `${s.name}: ${s.gaError ? "users unavailable (GA error)" : `${s.users} users`} · ${s.signals} signals` +
         (s.signalRate !== null ? ` · ${s.signalRate.toFixed(1)}% signal rate` : "") +
         (s.topModel ? ` · top interest: ${s.topModel}` : ""),
     );
@@ -158,7 +185,7 @@ export function renderDigestHtml(d: DigestPayload): string {
     .map((s) =>
       row(
         s.name,
-        `${s.users} users · ${s.signals} signals` +
+        `${s.gaError ? "users unavailable (GA error)" : `${s.users} users`} · ${s.signals} signals` +
           (s.signalRate !== null ? ` · ${s.signalRate.toFixed(1)}%` : "") +
           (s.topModel ? ` · top: ${s.topModel}` : ""),
       ),

@@ -591,7 +591,7 @@ export function Dashboard() {
       {propertyId === MONZA_PROPERTY_ID ? (
         <div className="mt-3 sm:mt-4">
           <DeadUrlsPanel
-            data={deadUrls}
+            data={deadUrls && deadUrls.range === range ? deadUrls : null}
             loading={loadingDeadUrls}
             error={deadUrlsError}
             delayClass="animate-rise-delay-3"

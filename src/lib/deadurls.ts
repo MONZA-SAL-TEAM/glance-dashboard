@@ -23,26 +23,56 @@ const KNOWN_LEGACY = [
   "/category/uncategorized",
 ];
 
-async function probe(path: string): Promise<number> {
+async function fetchStatus(url: string): Promise<{ status: number; location: string | null }> {
   try {
-    const res = await fetch(BASE + path, {
+    const res = await fetch(url, {
       method: "GET",
       redirect: "manual",
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
       headers: { "User-Agent": "GlanceHealth/1.0 (+monzasal.com)" },
     });
-    return res.status;
+    const location = res.headers.get("location");
+    // Release the connection — undici keeps it open until the body is drained.
+    try {
+      await res.body?.cancel();
+    } catch {}
+    return { status: res.status, location };
   } catch {
-    return 0;
+    return { status: 0, location: null };
   }
 }
 
-function verdictFor(status: number): DeadUrlRow["verdict"] {
-  if (status === 404 || status === 410) return "open";
-  if (status >= 300 && status < 400) return "redirect-deployed";
-  if (status === 200) return "resolved";
-  return "unknown";
+/** A redirect only counts as deployed when its target actually resolves —
+ * a 301 into a 404 is still an open dead URL. */
+async function probe(path: string): Promise<{ status: number; verdict: DeadUrlRow["verdict"] }> {
+  const first = await fetchStatus(BASE + path);
+  if (first.status === 404 || first.status === 410) return { status: first.status, verdict: "open" };
+  if (first.status === 200) return { status: first.status, verdict: "resolved" };
+  if (first.status >= 300 && first.status < 400 && first.location) {
+    const target = new URL(first.location, BASE).toString();
+    const hop = await fetchStatus(target);
+    const landsOk =
+      hop.status === 200 || (hop.status >= 300 && hop.status < 400);
+    return {
+      status: first.status,
+      verdict: landsOk ? "redirect-deployed" : "open",
+    };
+  }
+  return { status: first.status, verdict: "unknown" };
+}
+
+async function probeAll(
+  paths: string[],
+): Promise<Array<{ status: number; verdict: DeadUrlRow["verdict"] }>> {
+  // Batched so ~47 candidates don't hit the small site in one burst.
+  const results: Array<{ status: number; verdict: DeadUrlRow["verdict"] }> = [];
+  const batchSize = 8;
+  for (let i = 0; i < paths.length; i += batchSize) {
+    const batch = paths.slice(i, i + batchSize);
+    results.push(...(await Promise.all(batch.map((p) => probe(p)))));
+  }
+  return results;
 }
 
 export async function fetchDeadUrls(
@@ -52,7 +82,17 @@ export async function fetchDeadUrls(
   const property = propertyPath(MONZA_PROPERTY);
   const { current } = dateRangesFor(range);
 
-  const [bySourceRes, byDateRes] = await Promise.all([
+  const [hitsRes, bySourceRes, byDateRes] = await Promise.all([
+    // Hit counts come from a path-only report — summing across
+    // (path, source) rows would count multi-source users repeatedly.
+    client.runReport({
+      property,
+      dateRanges: [current],
+      dimensions: [{ name: "pagePath" }],
+      metrics: [{ name: "totalUsers" }],
+      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
+      limit: 100,
+    }),
     client.runReport({
       property,
       dateRanges: [current],
@@ -71,12 +111,14 @@ export async function fetchDeadUrls(
   ]);
 
   const hitsByPath = new Map<string, number>();
+  for (const row of hitsRes[0].rows ?? []) {
+    hitsByPath.set(dimensionValue(row, 0), metricNumber(row, 0));
+  }
   const topSourceByPath = new Map<string, { source: string; users: number }>();
   for (const row of bySourceRes[0].rows ?? []) {
     const path = dimensionValue(row, 0);
     const source = dimensionValue(row, 1) || "(direct)";
     const users = metricNumber(row, 0);
-    hitsByPath.set(path, (hitsByPath.get(path) ?? 0) + users);
     const top = topSourceByPath.get(path);
     if (!top || users > top.users) topSourceByPath.set(path, { source, users });
   }
@@ -102,11 +144,11 @@ export async function fetchDeadUrls(
     (p) => p.startsWith("/") && p.length < 200,
   );
 
-  const statuses = await Promise.all(candidates.map((p) => probe(p)));
+  const probes = await probeAll(candidates);
 
   const rows: DeadUrlRow[] = [];
   candidates.forEach((path, i) => {
-    const status = statuses[i];
+    const { status, verdict } = probes[i];
     const isLegacy = KNOWN_LEGACY.includes(path);
     // Healthy pages are not dead URLs; keep 200s only for known legacy paths
     // (a legacy path serving 200 means someone resolved it with content).
@@ -119,7 +161,7 @@ export async function fetchDeadUrls(
       firstSeen: datesByPath.get(path)?.first ?? "—",
       lastSeen: datesByPath.get(path)?.last ?? "—",
       liveStatus: status,
-      verdict: verdictFor(status),
+      verdict,
     });
   });
 
