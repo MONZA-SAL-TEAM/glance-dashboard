@@ -180,7 +180,10 @@ export async function fetchPortfolio(
     fetchedAt: new Date().toISOString(),
     sites,
     demand,
-    insights: buildInsights(sites, demand, health, signalsResult.error),
+    // The top model is deliberately not an insight — it already leads the
+    // headline tiles and the demand board. "This period" carries changes,
+    // anomalies, and health only.
+    insights: buildInsights(sites, health, signalsResult.error),
     signalsError: signalsResult.error,
     healthError: health ? undefined : "health check still running",
   };
@@ -197,7 +200,6 @@ function pctLabel(current: number, previous: number): string | null {
  * broken. Deterministic and grounded — never speculative. */
 function buildInsights(
   sites: PortfolioSite[],
-  demand: PortfolioPayload["demand"],
   health: HealthPayload | null,
   signalsError: string | undefined,
 ): string[] {
@@ -212,7 +214,9 @@ function buildInsights(
       `GA data unavailable for ${sites.length - gaOk.length} of ${sites.length} sites — traffic numbers are partial.`,
     );
   } else if (usersDelta) {
-    insights.push(`Visitors ${usersDelta} vs the previous period (${users} across all sites).`);
+    insights.push(
+      `Total site users ${usersDelta} vs the previous period (${users} summed across the three sites).`,
+    );
   }
 
   if (!signalsError) {
@@ -242,12 +246,6 @@ function buildInsights(
   if (biggestMove) {
     insights.push(
       `${biggestMove.site.name} traffic ${biggestMove.change > 0 ? "up" : "down"} ${Math.abs(biggestMove.change).toFixed(0)}% (${biggestMove.site.prevUsers} → ${biggestMove.site.users} users).`,
-    );
-  }
-
-  if (demand[0]) {
-    insights.push(
-      `${demand[0].vehicle} is the most requested model (${demand[0].total} signals — directional at this volume).`,
     );
   }
 

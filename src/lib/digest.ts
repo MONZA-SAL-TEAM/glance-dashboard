@@ -148,7 +148,7 @@ export function renderDigestText(d: DigestPayload): string {
   for (const s of d.sites) {
     lines.push(
       `${s.name}: ${s.gaError ? "users unavailable (GA error)" : `${s.users} users`} · ${s.signals} signals` +
-        (s.signalRate !== null ? ` · ${s.signalRate.toFixed(1)}% signal rate` : "") +
+        (s.signalRate !== null ? ` · ${s.signalRate.toFixed(1)} signals / 100 users` : "") +
         (s.topModel ? ` · top interest: ${s.topModel}` : ""),
     );
   }
@@ -186,7 +186,7 @@ export function renderDigestHtml(d: DigestPayload): string {
       row(
         s.name,
         `${s.gaError ? "users unavailable (GA error)" : `${s.users} users`} · ${s.signals} signals` +
-          (s.signalRate !== null ? ` · ${s.signalRate.toFixed(1)}%` : "") +
+          (s.signalRate !== null ? ` · ${s.signalRate.toFixed(1)}/100 users` : "") +
           (s.topModel ? ` · top: ${s.topModel}` : ""),
       ),
     )

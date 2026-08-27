@@ -133,10 +133,10 @@ export function SignalsPanel({
             </div>
             <div>
               <p className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
-                {rate === null ? "—" : `${rate.toFixed(1)}%`}
+                {rate === null ? "—" : rate.toFixed(1)}
               </p>
               <p className="mt-1 text-xs text-ink-soft">
-                signal rate (all signals ÷ users)
+                signals per 100 users
               </p>
             </div>
           </div>

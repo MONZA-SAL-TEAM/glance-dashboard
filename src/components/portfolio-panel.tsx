@@ -223,12 +223,12 @@ function SiteCard({
               <p className="font-[family-name:var(--font-display)] text-xl font-semibold tracking-tight text-teal-deep">
                 {signalsUnavailable || site.signalRate === null
                   ? "—"
-                  : `${site.signalRate.toFixed(1)}%`}
+                  : site.signalRate.toFixed(1)}
               </p>
               <p className="mt-0.5 text-[11px] text-ink-soft">
                 {signalsUnavailable
                   ? "signal source unavailable"
-                  : `signal rate · ${formatNumber(site.highIntent)} high-intent of ${formatNumber(site.signals)}`}
+                  : `signals / 100 users · ${formatNumber(site.highIntent)} high-intent of ${formatNumber(site.signals)}`}
               </p>
             </div>
             {signalsUnavailable ? null : (

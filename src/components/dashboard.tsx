@@ -493,13 +493,13 @@ export function Dashboard() {
           {gatedPortfolio ? (
             <div className="mb-3 grid grid-cols-2 gap-3 sm:mb-4 sm:gap-4 lg:grid-cols-4">
               <MetricTile
-                label="Users"
+                label="Total site users"
                 value={
                   pfGaOk.length === gatedPortfolio.sites.length
                     ? formatNumber(pfUsers)
                     : "—"
                 }
-                hint={rangeLabel(range)}
+                hint={`${rangeLabel(range)} · summed across sites`}
                 delta={
                   pfGaOk.length === gatedPortfolio.sites.length
                     ? formatDelta(pfUsers, pfPrevUsers)
@@ -516,9 +516,9 @@ export function Dashboard() {
                 delayClass="animate-rise-delay-1"
               />
               <MetricTile
-                label="Signal rate"
-                value={pfRate === null ? "—" : `${pfRate.toFixed(1)}%`}
-                hint="signals ÷ users"
+                label="Signals / 100 users"
+                value={pfRate === null ? "—" : pfRate.toFixed(1)}
+                hint="one visitor can send several signals"
                 accent="ink"
                 delayClass="animate-rise-delay-2"
               />
@@ -639,9 +639,9 @@ export function Dashboard() {
             delayClass="animate-rise-delay-4"
           />
           <MetricTile
-            label="Signal rate"
-            value={signalRate === null ? "—" : `${signalRate.toFixed(1)}%`}
-            hint="All intent signals ÷ users"
+            label="Signals / 100 users"
+            value={signalRate === null ? "—" : signalRate.toFixed(1)}
+            hint="one visitor can send several signals"
             accent="coral"
             delayClass="animate-rise-delay-4"
           />
