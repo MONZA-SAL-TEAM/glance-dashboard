@@ -1,5 +1,6 @@
 import { format, subDays } from "date-fns";
 import { cached } from "./cache";
+import { rangeDays } from "./ranges";
 import {
   dateRangesFor,
   dimensionValue,
@@ -19,12 +20,6 @@ import {
   type PortfolioSite,
   type TrafficFilter,
 } from "./types";
-
-function rangeDays(range: DateRangeKey): number {
-  if (range === "7d") return 7;
-  if (range === "90d") return 90;
-  return 28;
-}
 
 const PROPERTY_TIMEZONE = "Asia/Beirut";
 
@@ -109,7 +104,7 @@ export async function fetchPortfolio(
           dimensions: [{ name: "date" }],
           metrics: [{ name: "totalUsers" }],
           orderBys: [{ dimension: { dimensionName: "date" } }],
-          limit: 120,
+          limit: days + 10,
           ...geoFilter,
         }),
       ]);

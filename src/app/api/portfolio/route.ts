@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cached } from "@/lib/cache";
 import { fetchPortfolio } from "@/lib/portfolio";
+import { parseRange } from "@/lib/ranges";
 import type { DateRangeKey, TrafficFilter } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-function parseRange(value: string | null): DateRangeKey {
-  if (value === "7d" || value === "90d" || value === "28d") return value;
-  return "28d";
-}
 
 function parseFilter(value: string | null): TrafficFilter {
   return value === "all" ? "all" : "lb";

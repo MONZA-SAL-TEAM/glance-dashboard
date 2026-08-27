@@ -1,4 +1,4 @@
-export type DateRangeKey = "7d" | "28d" | "90d";
+export type DateRangeKey = "7d" | "28d" | "90d" | "180d" | "365d";
 
 /** "lb" shows Lebanon-only traffic (bot noise removed), "all" is raw GA4. */
 export type TrafficFilter = "lb" | "all";
@@ -186,6 +186,11 @@ export interface OverviewPayload {
   overview: OverviewMetrics;
   /** Same metrics for the immediately preceding period of equal length. */
   previous: OverviewMetrics | null;
+  /** Earliest date GA reported any data in the queried windows. */
+  dataStartDate: string | null;
+  /** True when the requested range starts before any data exists — the
+   * window shown is shorter than the button implies. */
+  partialWindow: boolean;
   timeseries: TimeseriesPoint[];
   channels: ChannelRow[];
   landings: LandingRow[];
@@ -253,6 +258,41 @@ export interface DeadUrlsPayload {
   range: DateRangeKey;
   fetchedAt: string;
   rows: DeadUrlRow[];
+}
+
+/* --------------------------- model pages ----------------------------- */
+
+export interface ModelPageRow {
+  model: string;
+  views: number;
+  users: number;
+  sessions: number;
+  prevUsers: number;
+  /** % change in users vs the previous period; null when there's no base. */
+  usersChange: number | null;
+  /** Views ÷ users — how deeply the people who arrived actually browsed. */
+  viewsPerUser: number | null;
+  /** Engaged sessions ÷ sessions on the model page, as a percentage. */
+  engagementRate: number | null;
+  /** First-party intent signals attributed to this model. Site-scoped on a
+   * brand dashboard, all-sites on the portfolio. */
+  signals: number;
+  /** Signals ÷ model-page users × 100 — approximate: a signal can originate
+   * off the model page (e.g. a Monza hub click-out). */
+  signalsPer100Users: number | null;
+}
+
+export interface ModelPagesPayload {
+  range: DateRangeKey;
+  filter: TrafficFilter;
+  fetchedAt: string;
+  /** Set when scoped to one brand site; absent for the all-sites view. */
+  propertyId?: string;
+  rows: ModelPageRow[];
+  /** Model-looking paths that matched no mapping rule — surfaced so a new
+   * model page cannot go silently uncounted. */
+  unmappedPaths: string[];
+  signalsError?: string;
 }
 
 /* ------------------------------ digest ------------------------------- */

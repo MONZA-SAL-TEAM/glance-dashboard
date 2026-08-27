@@ -2,6 +2,7 @@ import { BetaAnalyticsDataClient } from "@google-analytics/data";
 import { format, subDays } from "date-fns";
 import { getGoogleCredentials } from "./google-credentials";
 import { getPropertyMeta, resolvePropertyId } from "./properties";
+import { rangeDays } from "./ranges";
 import type {
   ChannelRow,
   DateRangeKey,
@@ -18,12 +19,6 @@ import type {
 
 /** All three Monza GA4 properties report in Beirut time. */
 const PROPERTY_TIMEZONE = "Asia/Beirut";
-
-function rangeDays(range: DateRangeKey): number {
-  if (range === "7d") return 7;
-  if (range === "90d") return 90;
-  return 28;
-}
 
 /** Current window and the equally sized window immediately before it. */
 export function dateRangesFor(range: DateRangeKey) {
@@ -136,7 +131,8 @@ export async function fetchOverview(
       dimensions: [{ name: "date" }],
       metrics: [{ name: "totalUsers" }, { name: "sessions" }],
       orderBys: [{ dimension: { dimensionName: "date" } }],
-      limit: 400,
+      // Two windows of daily rows — a 12-month range needs ~732.
+      limit: rangeDays(range) * 2 + 10,
       ...geoFilter,
     }),
     client.runReport({
@@ -232,6 +228,21 @@ export async function fetchOverview(
     });
   }
 
+  // Long ranges reach back before the property existed. GA returns no rows
+  // for those days, and drawing them as zeros would claim the site had
+  // traffic of zero rather than no measurement at all — so trim the leading
+  // empty stretch and report where the data actually starts.
+  const firstDataDate =
+    [...usersByDay.keys(), ...prevUsersByDay.keys()].sort()[0] ?? null;
+  const trimmed = firstDataDate
+    ? timeseries.filter((p) => p.date >= firstDataDate)
+    : timeseries;
+  // Only call the window "partial" when the request genuinely predates data.
+  const requestedStart = format(subDays(anchor, days), "yyyy-MM-dd");
+  const partialWindow = Boolean(
+    firstDataDate && firstDataDate > requestedStart,
+  );
+
   const channels: ChannelRow[] = (channelsRes[0].rows ?? []).map((row) => ({
     channel: cleanLabel(dimensionValue(row, 0), "Unassigned"),
     users: metricNumber(row, 0),
@@ -272,7 +283,9 @@ export async function fetchOverview(
     fetchedAt: new Date().toISOString(),
     overview: parseSummary(summaryCurrent),
     previous: summaryPrevious ? parseSummary(summaryPrevious) : null,
-    timeseries,
+    dataStartDate: firstDataDate,
+    partialWindow,
+    timeseries: trimmed,
     channels,
     landings,
     pages,

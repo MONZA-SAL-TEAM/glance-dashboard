@@ -4,12 +4,14 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { DeadUrlsPanel } from "@/components/deadurls-panel";
 import { DemandBoard } from "@/components/demand-board";
 import { MetricTile } from "@/components/metric-tile";
+import { ModelPerformance } from "@/components/model-performance";
 import { HealthDetails, PortfolioPanel } from "@/components/portfolio-panel";
 import { RankList } from "@/components/rank-list";
 import { RealtimePanel } from "@/components/realtime-panel";
 import { SignalsPanel } from "@/components/signals-panel";
 import { SiteSwitcher } from "@/components/site-switcher";
 import { TrafficChart } from "@/components/traffic-chart";
+import { RANGE_KEYS, RANGE_SHORT, isRangeKey } from "@/lib/ranges";
 import { aliasToPropertyId, propertyIdToAlias } from "@/lib/sites";
 import {
   formatDelta,
@@ -21,6 +23,7 @@ import {
 import type {
   DateRangeKey,
   DeadUrlsPayload,
+  ModelPagesPayload,
   OverviewPayload,
   PortfolioPayload,
   RealtimePayload,
@@ -29,7 +32,7 @@ import type {
   TrafficFilter,
 } from "@/lib/types";
 
-const ranges: DateRangeKey[] = ["7d", "28d", "90d"];
+const ranges: DateRangeKey[] = RANGE_KEYS;
 
 const FILTER_STORAGE_KEY = "glance_traffic_filter";
 
@@ -38,6 +41,9 @@ const ALL_SITES = "all";
 
 /** The dead-URL report is Monza-specific (legacy WordPress paths). */
 const MONZA_PROPERTY_ID = "547222815";
+
+/** Brand sites that publish per-model pages (Monza's are brand hubs). */
+const MODEL_PROPERTY_IDS = ["541962515", "540543412"];
 
 export function Dashboard() {
   const [sites, setSites] = useState<SiteProperty[]>([]);
@@ -51,6 +57,9 @@ export function Dashboard() {
   const [signals, setSignals] = useState<SignalsPayload | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(null);
   const [deadUrls, setDeadUrls] = useState<DeadUrlsPayload | null>(null);
+  const [modelPages, setModelPages] = useState<ModelPagesPayload | null>(null);
+  const [modelPagesError, setModelPagesError] = useState<string | null>(null);
+  const [loadingModelPages, setLoadingModelPages] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [signalsError, setSignalsError] = useState<string | null>(null);
@@ -75,6 +84,7 @@ export function Dashboard() {
   const realtimeSeq = useRef(0);
   const portfolioSeq = useRef(0);
   const deadUrlsSeq = useRef(0);
+  const modelPagesSeq = useRef(0);
 
   // Adopt shareable URL state (?site=voyah&range=28d&filter=lb), falling back
   // to the per-browser stored filter. Runs once; fetch effects wait on `ready`.
@@ -90,7 +100,7 @@ export function Dashboard() {
       } else {
         setPropertyId(ALL_SITES);
       }
-      if (rangeParam === "7d" || rangeParam === "28d" || rangeParam === "90d") {
+      if (isRangeKey(rangeParam)) {
         setRange(rangeParam);
       }
       if (filterParam === "all" || filterParam === "lb") {
@@ -302,7 +312,42 @@ export function Dashboard() {
     }
   }, []);
 
+  const loadModelPages = useCallback(
+    async (
+      nextRange: DateRangeKey,
+      nextFilter: TrafficFilter,
+      nextProperty: string,
+    ) => {
+      const seq = ++modelPagesSeq.current;
+      setLoadingModelPages(true);
+      try {
+        const res = await fetch(
+          `/api/models?range=${nextRange}&filter=${nextFilter}&property=${encodeURIComponent(nextProperty)}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error || `Model pages failed (${res.status})`);
+        }
+        const data = (await res.json()) as ModelPagesPayload;
+        if (seq !== modelPagesSeq.current) return;
+        setModelPages(data);
+        setModelPagesError(null);
+      } catch (err) {
+        if (seq !== modelPagesSeq.current) return;
+        setModelPages(null);
+        setModelPagesError(
+          err instanceof Error ? err.message : "Model pages unavailable",
+        );
+      } finally {
+        if (seq === modelPagesSeq.current) setLoadingModelPages(false);
+      }
+    },
+    [],
+  );
+
   const isPortfolio = propertyId === ALL_SITES;
+  const isModelSite = MODEL_PROPERTY_IDS.includes(propertyId);
 
   useEffect(() => {
     if (!ready || !propertyId || propertyId === ALL_SITES) return;
@@ -327,6 +372,11 @@ export function Dashboard() {
       void loadPortfolio(range, filter);
     });
   }, [ready, propertyId, range, filter, loadPortfolio]);
+
+  useEffect(() => {
+    if (!ready || !MODEL_PROPERTY_IDS.includes(propertyId)) return;
+    void loadModelPages(range, filter, propertyId);
+  }, [ready, propertyId, range, filter, loadModelPages]);
 
   useEffect(() => {
     if (!ready || !propertyId || propertyId === ALL_SITES) return;
@@ -458,7 +508,14 @@ export function Dashboard() {
                 All traffic
               </button>
             </div>
-            <div className="range-pill" role="group" aria-label="Date range">
+            <div
+              className="range-pill"
+              role="group"
+              aria-label="Date range"
+              style={{
+                gridTemplateColumns: `repeat(${ranges.length}, minmax(0, 1fr))`,
+              }}
+            >
               {ranges.map((key) => (
                 <button
                   key={key}
@@ -467,8 +524,9 @@ export function Dashboard() {
                   className={
                     range === key ? "bg-ink text-white" : "text-ink-soft active:bg-sand"
                   }
+                  title={rangeLabel(key)}
                 >
-                  {key}
+                  {RANGE_SHORT[key]}
                 </button>
               ))}
             </div>
@@ -485,6 +543,22 @@ export function Dashboard() {
       {sitesWarning ? (
         <div className="mb-4 rounded-2xl border border-[var(--line)] bg-sand/60 px-4 py-3 text-sm text-ink-soft sm:mb-6">
           {sitesWarning}
+        </div>
+      ) : null}
+
+      {/* A long range can reach back before the property existed. Say so,
+          rather than letting the button imply a full year of history. */}
+      {!isPortfolio && overview?.partialWindow && overview.dataStartDate ? (
+        <div className="mb-4 rounded-2xl border border-[var(--line)] bg-sand/60 px-4 py-3 text-sm text-ink-soft sm:mb-6">
+          This property only has data from{" "}
+          <span className="font-medium text-ink">
+            {new Date(`${overview.dataStartDate}T00:00:00`).toLocaleDateString(
+              "en",
+              { day: "numeric", month: "short", year: "numeric" },
+            )}
+          </span>
+          , so {rangeLabel(range).toLowerCase()} shows a shorter window than the
+          label suggests.
         </div>
       ) : null}
 
@@ -662,9 +736,25 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="mt-3 sm:mt-4">
-        <TrafficChart data={overview?.timeseries ?? []} />
-      </div>
+      {/* Model performance leads the brand dashboards: the automotive
+          question comes before generic web analytics. */}
+      {isModelSite ? (
+        <div className="mt-3 sm:mt-4">
+          <ModelPerformance
+            data={
+              modelPages &&
+              modelPages.range === range &&
+              modelPages.filter === filter &&
+              modelPages.propertyId === propertyId
+                ? modelPages
+                : null
+            }
+            loading={loadingModelPages}
+            error={modelPagesError}
+            delayClass="animate-rise-delay-1"
+          />
+        </div>
+      ) : null}
 
       <div className="mt-3 sm:mt-4">
         <SignalsPanel
@@ -675,6 +765,10 @@ export function Dashboard() {
           geoFiltered={filter === "lb"}
           delayClass="animate-rise-delay-2"
         />
+      </div>
+
+      <div className="mt-3 sm:mt-4">
+        <TrafficChart data={overview?.timeseries ?? []} />
       </div>
 
       {propertyId === MONZA_PROPERTY_ID ? (
@@ -714,17 +808,6 @@ export function Dashboard() {
 
       <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
         <RankList
-          title="Top pages"
-          subtitle="What people actually open"
-          delayClass="animate-rise-delay-3"
-          valueLabel="views"
-          items={(overview?.pages ?? []).map((p) => ({
-            label: p.path,
-            sublabel: `${formatNumber(p.users)} users`,
-            value: p.views,
-          }))}
-        />
-        <RankList
           title={overview?.geoKind === "city" ? "Cities" : "Countries"}
           subtitle={
             overview?.geoKind === "city"
@@ -737,9 +820,6 @@ export function Dashboard() {
             value: g.users,
           }))}
         />
-      </div>
-
-      <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
         <RankList
           title="Devices"
           subtitle="Desktop, mobile, tablet split"
@@ -749,6 +829,41 @@ export function Dashboard() {
             value: d.users,
           }))}
         />
+      </div>
+
+      {/* The full URL list is reference material, not a decision surface. */}
+      <details className="panel animate-rise animate-rise-delay-4 mt-3 rounded-2xl p-4 sm:mt-4 sm:rounded-3xl sm:p-5 md:p-6">
+        <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-ink">
+          View page details
+          <span className="font-normal text-ink-soft">
+            · every page by views
+          </span>
+          <span className="ml-auto text-xs font-normal text-ink-soft">▾</span>
+        </summary>
+        <div className="mt-4">
+          <ul className="space-y-2 text-sm">
+            {(overview?.pages ?? []).length === 0 ? (
+              <li className="text-ink-soft">No page data for this range.</li>
+            ) : (
+              (overview?.pages ?? []).map((p) => (
+                <li
+                  key={p.path}
+                  className="flex items-baseline justify-between gap-3 border-b border-[var(--line)] pb-2"
+                >
+                  <span className="min-w-0 flex-1 truncate text-ink [overflow-wrap:anywhere]">
+                    {p.path}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-ink-soft">
+                    {formatNumber(p.views)} views · {formatNumber(p.users)} users
+                  </span>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      </details>
+
+      <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
         <section className="panel animate-rise animate-rise-delay-4 rounded-2xl p-4 sm:rounded-3xl sm:p-5 md:p-6">
           <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight text-ink sm:text-xl">
             About this data

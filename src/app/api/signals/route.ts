@@ -3,14 +3,10 @@ import { cached } from "@/lib/cache";
 import { getPropertyMeta, resolvePropertyId } from "@/lib/properties";
 import { fetchSignals } from "@/lib/signals";
 import { siteDomainForProperty } from "@/lib/sites";
+import { parseRange } from "@/lib/ranges";
 import type { DateRangeKey } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-function parseRange(value: string | null): DateRangeKey {
-  if (value === "7d" || value === "90d" || value === "28d") return value;
-  return "28d";
-}
 
 export async function GET(request: NextRequest) {
   try {
