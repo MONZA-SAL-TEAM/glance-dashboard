@@ -40,6 +40,10 @@ export function rangeLabel(range: string): string {
       return "Last 7 days";
     case "90d":
       return "Last 90 days";
+    case "180d":
+      return "Last 6 months";
+    case "365d":
+      return "Last 12 months";
     default:
       return "Last 28 days";
   }

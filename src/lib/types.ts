@@ -1,4 +1,4 @@
-export type DateRangeKey = "7d" | "28d" | "90d";
+export type DateRangeKey = "7d" | "28d" | "90d" | "180d" | "365d";
 
 /** "lb" shows Lebanon-only traffic (bot noise removed), "all" is raw GA4. */
 export type TrafficFilter = "lb" | "all";
@@ -186,6 +186,11 @@ export interface OverviewPayload {
   overview: OverviewMetrics;
   /** Same metrics for the immediately preceding period of equal length. */
   previous: OverviewMetrics | null;
+  /** Earliest date GA reported any data in the queried windows. */
+  dataStartDate: string | null;
+  /** True when the requested range starts before any data exists — the
+   * window shown is shorter than the button implies. */
+  partialWindow: boolean;
   timeseries: TimeseriesPoint[];
   channels: ChannelRow[];
   landings: LandingRow[];

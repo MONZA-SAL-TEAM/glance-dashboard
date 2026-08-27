@@ -1,4 +1,5 @@
 import { format, startOfWeek, subDays } from "date-fns";
+import { rangeDays } from "./ranges";
 import {
   emptyBreakdown,
   EVENT_TYPES,
@@ -35,12 +36,6 @@ interface SignalStatRow {
   event_type: string;
   vehicle: string;
   n: number;
-}
-
-function rangeDays(range: DateRangeKey): number {
-  if (range === "7d") return 7;
-  if (range === "90d") return 90;
-  return 28;
 }
 
 function isoDay(date: Date): string {

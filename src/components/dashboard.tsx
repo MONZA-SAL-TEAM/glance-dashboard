@@ -11,6 +11,7 @@ import { RealtimePanel } from "@/components/realtime-panel";
 import { SignalsPanel } from "@/components/signals-panel";
 import { SiteSwitcher } from "@/components/site-switcher";
 import { TrafficChart } from "@/components/traffic-chart";
+import { RANGE_KEYS, RANGE_SHORT, isRangeKey } from "@/lib/ranges";
 import { aliasToPropertyId, propertyIdToAlias } from "@/lib/sites";
 import {
   formatDelta,
@@ -31,7 +32,7 @@ import type {
   TrafficFilter,
 } from "@/lib/types";
 
-const ranges: DateRangeKey[] = ["7d", "28d", "90d"];
+const ranges: DateRangeKey[] = RANGE_KEYS;
 
 const FILTER_STORAGE_KEY = "glance_traffic_filter";
 
@@ -99,7 +100,7 @@ export function Dashboard() {
       } else {
         setPropertyId(ALL_SITES);
       }
-      if (rangeParam === "7d" || rangeParam === "28d" || rangeParam === "90d") {
+      if (isRangeKey(rangeParam)) {
         setRange(rangeParam);
       }
       if (filterParam === "all" || filterParam === "lb") {
@@ -507,7 +508,14 @@ export function Dashboard() {
                 All traffic
               </button>
             </div>
-            <div className="range-pill" role="group" aria-label="Date range">
+            <div
+              className="range-pill"
+              role="group"
+              aria-label="Date range"
+              style={{
+                gridTemplateColumns: `repeat(${ranges.length}, minmax(0, 1fr))`,
+              }}
+            >
               {ranges.map((key) => (
                 <button
                   key={key}
@@ -516,8 +524,9 @@ export function Dashboard() {
                   className={
                     range === key ? "bg-ink text-white" : "text-ink-soft active:bg-sand"
                   }
+                  title={rangeLabel(key)}
                 >
-                  {key}
+                  {RANGE_SHORT[key]}
                 </button>
               ))}
             </div>
@@ -534,6 +543,22 @@ export function Dashboard() {
       {sitesWarning ? (
         <div className="mb-4 rounded-2xl border border-[var(--line)] bg-sand/60 px-4 py-3 text-sm text-ink-soft sm:mb-6">
           {sitesWarning}
+        </div>
+      ) : null}
+
+      {/* A long range can reach back before the property existed. Say so,
+          rather than letting the button imply a full year of history. */}
+      {!isPortfolio && overview?.partialWindow && overview.dataStartDate ? (
+        <div className="mb-4 rounded-2xl border border-[var(--line)] bg-sand/60 px-4 py-3 text-sm text-ink-soft sm:mb-6">
+          This property only has data from{" "}
+          <span className="font-medium text-ink">
+            {new Date(`${overview.dataStartDate}T00:00:00`).toLocaleDateString(
+              "en",
+              { day: "numeric", month: "short", year: "numeric" },
+            )}
+          </span>
+          , so {rangeLabel(range).toLowerCase()} shows a shorter window than the
+          label suggests.
         </div>
       ) : null}
 
