@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { DeadUrlsPanel } from "@/components/deadurls-panel";
 import { DemandBoard } from "@/components/demand-board";
 import { MetricTile } from "@/components/metric-tile";
+import { ModelPages } from "@/components/model-pages";
 import { HealthDetails, PortfolioPanel } from "@/components/portfolio-panel";
 import { RankList } from "@/components/rank-list";
 import { RealtimePanel } from "@/components/realtime-panel";
@@ -21,6 +22,7 @@ import {
 import type {
   DateRangeKey,
   DeadUrlsPayload,
+  ModelPagesPayload,
   OverviewPayload,
   PortfolioPayload,
   RealtimePayload,
@@ -51,6 +53,9 @@ export function Dashboard() {
   const [signals, setSignals] = useState<SignalsPayload | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(null);
   const [deadUrls, setDeadUrls] = useState<DeadUrlsPayload | null>(null);
+  const [modelPages, setModelPages] = useState<ModelPagesPayload | null>(null);
+  const [modelPagesError, setModelPagesError] = useState<string | null>(null);
+  const [loadingModelPages, setLoadingModelPages] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [signalsError, setSignalsError] = useState<string | null>(null);
@@ -75,6 +80,7 @@ export function Dashboard() {
   const realtimeSeq = useRef(0);
   const portfolioSeq = useRef(0);
   const deadUrlsSeq = useRef(0);
+  const modelPagesSeq = useRef(0);
 
   // Adopt shareable URL state (?site=voyah&range=28d&filter=lb), falling back
   // to the per-browser stored filter. Runs once; fetch effects wait on `ready`.
@@ -302,6 +308,36 @@ export function Dashboard() {
     }
   }, []);
 
+  const loadModelPages = useCallback(
+    async (nextRange: DateRangeKey, nextFilter: TrafficFilter) => {
+      const seq = ++modelPagesSeq.current;
+      setLoadingModelPages(true);
+      try {
+        const res = await fetch(
+          `/api/models?range=${nextRange}&filter=${nextFilter}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error || `Model pages failed (${res.status})`);
+        }
+        const data = (await res.json()) as ModelPagesPayload;
+        if (seq !== modelPagesSeq.current) return;
+        setModelPages(data);
+        setModelPagesError(null);
+      } catch (err) {
+        if (seq !== modelPagesSeq.current) return;
+        setModelPages(null);
+        setModelPagesError(
+          err instanceof Error ? err.message : "Model pages unavailable",
+        );
+      } finally {
+        if (seq === modelPagesSeq.current) setLoadingModelPages(false);
+      }
+    },
+    [],
+  );
+
   const isPortfolio = propertyId === ALL_SITES;
 
   useEffect(() => {
@@ -327,6 +363,11 @@ export function Dashboard() {
       void loadPortfolio(range, filter);
     });
   }, [ready, propertyId, range, filter, loadPortfolio]);
+
+  useEffect(() => {
+    if (!ready || propertyId !== ALL_SITES) return;
+    void loadModelPages(range, filter);
+  }, [ready, propertyId, range, filter, loadModelPages]);
 
   useEffect(() => {
     if (!ready || !propertyId || propertyId === ALL_SITES) return;
@@ -569,6 +610,21 @@ export function Dashboard() {
               <DemandBoard demand={gatedPortfolio.demand} delayClass="animate-rise-delay-2" />
             </div>
           ) : null}
+
+          <div className="mt-3 sm:mt-4">
+            <ModelPages
+              data={
+                modelPages &&
+                modelPages.range === range &&
+                modelPages.filter === filter
+                  ? modelPages
+                  : null
+              }
+              loading={loadingModelPages}
+              error={modelPagesError}
+              delayClass="animate-rise-delay-3"
+            />
+          </div>
 
           {gatedPortfolio ? (
             <div className="mt-3 sm:mt-4">

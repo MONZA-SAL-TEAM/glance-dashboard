@@ -255,6 +255,36 @@ export interface DeadUrlsPayload {
   rows: DeadUrlRow[];
 }
 
+/* --------------------------- model pages ----------------------------- */
+
+export interface ModelPageRow {
+  model: string;
+  views: number;
+  users: number;
+  sessions: number;
+  prevUsers: number;
+  /** % change in users vs the previous period; null when there's no base. */
+  usersChange: number | null;
+  /** Engaged sessions ÷ sessions on the model page, as a percentage. */
+  engagementRate: number | null;
+  /** First-party intent signals attributed to this model (any site). */
+  signals: number;
+  /** Signals ÷ model-page users × 100 — approximate: a signal can originate
+   * off the model page (e.g. a Monza hub click-out). */
+  signalsPer100Users: number | null;
+}
+
+export interface ModelPagesPayload {
+  range: DateRangeKey;
+  filter: TrafficFilter;
+  fetchedAt: string;
+  rows: ModelPageRow[];
+  /** Model-looking paths that matched no mapping rule — surfaced so a new
+   * model page cannot go silently uncounted. */
+  unmappedPaths: string[];
+  signalsError?: string;
+}
+
 /* ------------------------------ digest ------------------------------- */
 
 export interface DigestSiteSummary {
