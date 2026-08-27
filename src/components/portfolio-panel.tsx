@@ -49,43 +49,76 @@ const STATUS_LABEL: Record<HealthStatus, string> = {
   unknown: "Unknown",
 };
 
-/** Real instrumentation health from the monitor; falls back to a neutral
- * "checking" state while the first health run is still warming up. */
-function HealthBlock({ health }: { health: SiteHealth | null }) {
-  if (!health) {
-    return (
-      <div className="mt-3 flex items-center gap-2 border-t border-[var(--line)] pt-3 text-xs text-ink-soft">
-        <span className="h-2 w-2 rounded-full bg-[#9aacb8]" />
-        Tracking health: checking…
-      </div>
-    );
-  }
-  const failing = health.checks.filter((c) => !c.ok);
+/**
+ * Full per-check breakdown, one level below the home screen. The cards carry
+ * only the status dot; anyone chasing a warning opens this.
+ */
+export function HealthDetails({
+  sites,
+  delayClass = "",
+}: {
+  sites: Array<{ name: string; health: SiteHealth | null }>;
+  delayClass?: string;
+}) {
+  const withHealth = sites.filter((s) => s.health);
+  if (withHealth.length === 0) return null;
+  const troubled = withHealth.filter(
+    (s) => s.health!.status === "warning" || s.health!.status === "critical",
+  );
   return (
-    <details className="mt-3 border-t border-[var(--line)] pt-3 text-xs">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-ink">
-        <span className={`h-2 w-2 rounded-full ${STATUS_DOT[health.status]}`} />
-        <span className="font-semibold">{STATUS_LABEL[health.status]}</span>
-        <span className="text-ink-soft">
-          · {health.checks.length - failing.length}/{health.checks.length} checks
-          pass
-        </span>
-        <span className="ml-auto text-ink-soft">▾</span>
-      </summary>
-      <ul className="mt-2 max-h-44 space-y-1 overflow-y-auto pr-1 text-[11px] leading-snug text-ink-soft">
-        {(failing.length > 0 ? failing : health.checks.slice(0, 6)).map(
-          (c, i) => (
-            <li key={i} className="flex items-start gap-1.5">
-              <span
-                className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${c.ok ? "bg-teal" : c.soft ? "bg-[#d9a441]" : "bg-coral"}`}
-              />
-              <span className="min-w-0">
-                <span className="text-ink">{c.name}</span> — {c.detail}
-              </span>
-            </li>
-          ),
+    <details
+      className={`panel animate-rise rounded-2xl p-4 sm:rounded-3xl sm:p-5 ${delayClass}`}
+    >
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-sm font-semibold text-ink">
+        Tracking health
+        {troubled.length === 0 ? (
+          <span className="chip ok rounded-full bg-teal/15 px-2.5 py-0.5 text-xs font-semibold text-teal-deep">
+            all clear
+          </span>
+        ) : (
+          troubled.map((s) => (
+            <span
+              key={s.name}
+              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                s.health!.status === "critical"
+                  ? "bg-coral/15 text-coral"
+                  : "bg-[#d9a441]/20 text-[#8a5a12]"
+              }`}
+            >
+              {s.name}: {STATUS_LABEL[s.health!.status]}
+            </span>
+          ))
         )}
-      </ul>
+        <span className="ml-auto text-xs font-normal text-ink-soft">details ▾</span>
+      </summary>
+      <div className="mt-4 grid gap-5 sm:grid-cols-3">
+        {withHealth.map((s) => {
+          const failing = s.health!.checks.filter((c) => !c.ok);
+          return (
+            <div key={s.name} className="min-w-0">
+              <p className="mb-2 flex items-center gap-2 text-xs font-semibold text-ink">
+                <span className={`h-2 w-2 rounded-full ${STATUS_DOT[s.health!.status]}`} />
+                {s.name}
+                <span className="font-normal text-ink-soft">
+                  {s.health!.checks.length - failing.length}/{s.health!.checks.length} pass
+                </span>
+              </p>
+              <ul className="max-h-48 space-y-1 overflow-y-auto pr-1 text-[11px] leading-snug text-ink-soft">
+                {(failing.length > 0 ? failing : s.health!.checks.slice(0, 5)).map((c, i) => (
+                  <li key={i} className="flex items-start gap-1.5">
+                    <span
+                      className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${c.ok ? "bg-teal" : c.soft ? "bg-[#d9a441]" : "bg-coral"}`}
+                    />
+                    <span className="min-w-0">
+                      <span className="text-ink">{c.name}</span> — {c.detail}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
     </details>
   );
 }
@@ -114,13 +147,15 @@ function SiteCard({
           </h2>
           <p className="truncate text-xs text-ink-soft">{site.domain}</p>
         </div>
-        {site.health ? (
-          <span
-            className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${STATUS_DOT[site.health.status]}`}
-            title={site.health.summary}
-            aria-label={`Tracking ${STATUS_LABEL[site.health.status]}`}
-          />
-        ) : null}
+        <span
+          className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${site.health ? STATUS_DOT[site.health.status] : "bg-[#9aacb8]"}`}
+          title={site.health ? site.health.summary : "Tracking health: checking…"}
+          aria-label={
+            site.health
+              ? `Tracking ${STATUS_LABEL[site.health.status]}`
+              : "Tracking health checking"
+          }
+        />
       </div>
 
       {site.error ? (
@@ -202,8 +237,6 @@ function SiteCard({
           </div>
         </>
       )}
-
-      <HealthBlock health={site.health} />
 
       <button
         type="button"

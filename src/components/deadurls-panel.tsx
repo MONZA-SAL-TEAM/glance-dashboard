@@ -26,13 +26,25 @@ export function DeadUrlsPanel({
   error,
   delayClass = "",
 }: DeadUrlsPanelProps) {
+  const openCount = data?.rows.filter((r) => r.verdict === "open").length ?? 0;
   return (
-    <section
+    <details
       className={`panel animate-rise rounded-2xl p-4 sm:rounded-3xl sm:p-5 md:p-6 ${delayClass}`}
+      open={openCount > 0}
     >
-      <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight text-ink sm:text-xl">
-        Dead &amp; legacy URLs
-      </h2>
+      <summary className="flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight text-ink sm:text-xl">
+          Dead &amp; legacy URLs
+        </h2>
+        {data ? (
+          <span
+            className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${openCount > 0 ? "bg-coral/15 text-coral" : "bg-teal/15 text-teal-deep"}`}
+          >
+            {openCount > 0 ? `${openCount} open` : "none open"}
+          </span>
+        ) : null}
+        <span className="ml-auto text-xs text-ink-soft">details ▾</span>
+      </summary>
       <p className="mt-1 text-sm text-ink-soft">
         Paths still receiving traffic, probed live — open 404s lose the users
         that hit them
@@ -91,6 +103,6 @@ export function DeadUrlsPanel({
           No dead URLs receiving traffic in this range.
         </p>
       ) : null}
-    </section>
+    </details>
   );
 }

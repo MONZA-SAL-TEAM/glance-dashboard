@@ -169,6 +169,8 @@ export interface PortfolioPayload {
   sites: PortfolioSite[];
   /** All-sites model demand (directional, first-party). */
   demand: DemandRow[];
+  /** 3–5 deterministic, data-grounded observations for the home screen. */
+  insights: string[];
   /** Set when the signals source failed; cards then omit signal numbers. */
   signalsError?: string;
   healthError?: string;

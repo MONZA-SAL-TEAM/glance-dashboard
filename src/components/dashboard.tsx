@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { DeadUrlsPanel } from "@/components/deadurls-panel";
 import { DemandBoard } from "@/components/demand-board";
 import { MetricTile } from "@/components/metric-tile";
-import { PortfolioPanel } from "@/components/portfolio-panel";
+import { HealthDetails, PortfolioPanel } from "@/components/portfolio-panel";
 import { RankList } from "@/components/rank-list";
 import { RealtimePanel } from "@/components/realtime-panel";
 import { SignalsPanel } from "@/components/signals-panel";
@@ -365,6 +365,28 @@ export function Dashboard() {
       ? (signals.total / metrics.users) * 100
       : null;
 
+  // Portfolio payload is only rendered when it matches the selected range +
+  // filter; the home-screen headline numbers derive from it.
+  const gatedPortfolio =
+    portfolio && portfolio.range === range && portfolio.filter === filter
+      ? portfolio
+      : null;
+  const pfGaOk = gatedPortfolio?.sites.filter((s) => !s.error) ?? [];
+  const pfUsers = pfGaOk.reduce((a, s) => a + s.users, 0);
+  const pfPrevUsers = pfGaOk.reduce((a, s) => a + s.prevUsers, 0);
+  const pfSignals = gatedPortfolio
+    ? gatedPortfolio.sites.reduce((a, s) => a + s.signals, 0)
+    : 0;
+  const pfPrevSignals = gatedPortfolio
+    ? gatedPortfolio.sites.reduce((a, s) => a + s.prevSignals, 0)
+    : 0;
+  const pfSignalsOk = Boolean(gatedPortfolio && !gatedPortfolio.signalsError);
+  const pfRate =
+    pfSignalsOk && pfUsers > 0 && pfGaOk.length === gatedPortfolio?.sites.length
+      ? (pfSignals / pfUsers) * 100
+      : null;
+  const pfTopModel = pfSignalsOk ? (gatedPortfolio?.demand[0] ?? null) : null;
+
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-8 pt-[max(1.25rem,env(safe-area-inset-top))] sm:px-6 sm:py-8 md:px-8 md:py-10">
       <header className="animate-rise mb-6 flex flex-col gap-4 sm:mb-8 sm:gap-6 md:mb-10 md:flex-row md:items-end md:justify-between">
@@ -468,12 +490,69 @@ export function Dashboard() {
 
       {isPortfolio ? (
         <>
+          {gatedPortfolio ? (
+            <div className="mb-3 grid grid-cols-2 gap-3 sm:mb-4 sm:gap-4 lg:grid-cols-4">
+              <MetricTile
+                label="Users"
+                value={
+                  pfGaOk.length === gatedPortfolio.sites.length
+                    ? formatNumber(pfUsers)
+                    : "—"
+                }
+                hint={rangeLabel(range)}
+                delta={
+                  pfGaOk.length === gatedPortfolio.sites.length
+                    ? formatDelta(pfUsers, pfPrevUsers)
+                    : null
+                }
+                delayClass="animate-rise-delay-1"
+              />
+              <MetricTile
+                label="Signals"
+                value={pfSignalsOk ? formatNumber(pfSignals) : "—"}
+                hint="all intent actions, all sites"
+                delta={pfSignalsOk ? formatDelta(pfSignals, pfPrevSignals) : null}
+                accent="coral"
+                delayClass="animate-rise-delay-1"
+              />
+              <MetricTile
+                label="Signal rate"
+                value={pfRate === null ? "—" : `${pfRate.toFixed(1)}%`}
+                hint="signals ÷ users"
+                accent="ink"
+                delayClass="animate-rise-delay-2"
+              />
+              <MetricTile
+                label="Top model"
+                value={pfTopModel ? pfTopModel.vehicle : "—"}
+                hint={
+                  pfTopModel
+                    ? `${formatNumber(pfTopModel.total)} signals · directional`
+                    : undefined
+                }
+                delayClass="animate-rise-delay-2"
+              />
+            </div>
+          ) : null}
+
+          {gatedPortfolio && gatedPortfolio.insights.length > 0 ? (
+            <section className="panel animate-rise mb-3 rounded-2xl p-4 sm:mb-4 sm:rounded-3xl sm:p-5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-soft">
+                This period
+              </p>
+              <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-ink">
+                {gatedPortfolio.insights.map((line, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-teal" />
+                    <span className="min-w-0">{line}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           <PortfolioPanel
-            data={
-              portfolio && portfolio.range === range && portfolio.filter === filter
-                ? portfolio
-                : null
-            }
+            data={gatedPortfolio}
             loading={loadingPortfolio}
             error={portfolioError}
             onOpenSite={(id) => {
@@ -484,12 +563,22 @@ export function Dashboard() {
               setPropertyId(id);
             }}
           />
-          {portfolio &&
-          portfolio.range === range &&
-          portfolio.filter === filter &&
-          !portfolio.signalsError ? (
+
+          {gatedPortfolio && !gatedPortfolio.signalsError ? (
             <div className="mt-3 sm:mt-4">
-              <DemandBoard demand={portfolio.demand} delayClass="animate-rise-delay-2" />
+              <DemandBoard demand={gatedPortfolio.demand} delayClass="animate-rise-delay-2" />
+            </div>
+          ) : null}
+
+          {gatedPortfolio ? (
+            <div className="mt-3 sm:mt-4">
+              <HealthDetails
+                sites={gatedPortfolio.sites.map((s) => ({
+                  name: s.name,
+                  health: s.health,
+                }))}
+                delayClass="animate-rise-delay-3"
+              />
             </div>
           ) : null}
         </>

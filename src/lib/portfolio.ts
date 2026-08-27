@@ -173,13 +173,94 @@ export async function fetchPortfolio(
       health?.sites.find((h) => h.site === site.domain) ?? null;
   }
 
+  const demand = signalsResult.overview?.demand ?? [];
   return {
     range,
     filter,
     fetchedAt: new Date().toISOString(),
     sites,
-    demand: signalsResult.overview?.demand ?? [],
+    demand,
+    insights: buildInsights(sites, demand, health, signalsResult.error),
     signalsError: signalsResult.error,
     healthError: health ? undefined : "health check still running",
   };
+}
+
+function pctLabel(current: number, previous: number): string | null {
+  if (!Number.isFinite(previous) || previous <= 0) return null;
+  const change = ((current - previous) / previous) * 100;
+  if (Math.abs(change) < 0.5) return "flat";
+  return `${change > 0 ? "up" : "down"} ${Math.abs(change).toFixed(0)}%`;
+}
+
+/** The home screen's 3–5 lines: what happened, what people want, is anything
+ * broken. Deterministic and grounded — never speculative. */
+function buildInsights(
+  sites: PortfolioSite[],
+  demand: PortfolioPayload["demand"],
+  health: HealthPayload | null,
+  signalsError: string | undefined,
+): string[] {
+  const insights: string[] = [];
+  const gaOk = sites.filter((s) => !s.error);
+
+  const users = gaOk.reduce((a, s) => a + s.users, 0);
+  const prevUsers = gaOk.reduce((a, s) => a + s.prevUsers, 0);
+  const usersDelta = pctLabel(users, prevUsers);
+  if (gaOk.length < sites.length) {
+    insights.push(
+      `GA data unavailable for ${sites.length - gaOk.length} of ${sites.length} sites — traffic numbers are partial.`,
+    );
+  } else if (usersDelta) {
+    insights.push(`Visitors ${usersDelta} vs the previous period (${users} across all sites).`);
+  }
+
+  if (!signalsError) {
+    const signals = sites.reduce((a, s) => a + s.signals, 0);
+    const prevSignals = sites.reduce((a, s) => a + s.prevSignals, 0);
+    const signalsDelta = pctLabel(signals, prevSignals);
+    if (signalsDelta) {
+      insights.push(`Intent signals ${signalsDelta} (${signals} in this period).`);
+    }
+    for (const s of sites) {
+      if (!s.error && s.prevSignals >= 5 && s.signals === 0) {
+        insights.push(
+          `${s.name} recorded zero signals after ${s.prevSignals} last period — check tracking before assuming demand fell.`,
+        );
+      }
+    }
+  }
+
+  let biggestMove: { site: PortfolioSite; change: number } | null = null;
+  for (const s of gaOk) {
+    if (s.prevUsers < 20) continue;
+    const change = ((s.users - s.prevUsers) / s.prevUsers) * 100;
+    if (Math.abs(change) >= 15 && (!biggestMove || Math.abs(change) > Math.abs(biggestMove.change))) {
+      biggestMove = { site: s, change };
+    }
+  }
+  if (biggestMove) {
+    insights.push(
+      `${biggestMove.site.name} traffic ${biggestMove.change > 0 ? "up" : "down"} ${Math.abs(biggestMove.change).toFixed(0)}% (${biggestMove.site.prevUsers} → ${biggestMove.site.users} users).`,
+    );
+  }
+
+  if (demand[0]) {
+    insights.push(
+      `${demand[0].vehicle} is the most requested model (${demand[0].total} signals — directional at this volume).`,
+    );
+  }
+
+  if (health) {
+    const troubled = health.sites.filter(
+      (h) => h.status === "warning" || h.status === "critical",
+    );
+    insights.push(
+      troubled.length === 0
+        ? "No tracking issues detected on monitored pages."
+        : `${troubled.length} site${troubled.length > 1 ? "s have" : " has"} tracking warnings — see tracking health below.`,
+    );
+  }
+
+  return insights.slice(0, 5);
 }
