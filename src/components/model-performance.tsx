@@ -28,7 +28,9 @@ function conclusionsFor(rows: ModelPageRow[]): string[] {
     );
   }
 
-  // Strongest intent relative to the size of its own audience.
+  // Strongest intent relative to the size of its own audience. Worded as a
+  // ratio, not a conversion claim: a signal is attributed to the model and
+  // scoped to this site, but need not have happened on the model page.
   const rated = withTraffic.filter(
     (r) => r.users >= 10 && r.signalsPer100Users !== null && r.signals > 0,
   );
@@ -38,7 +40,7 @@ function conclusionsFor(rows: ModelPageRow[]): string[] {
     )[0];
     if (best && best.model !== topViews?.model) {
       out.push(
-        `${best.model} converts its traffic hardest — ${best.signals} signals from ${formatNumber(best.users)} users.`,
+        `${best.model} generates the strongest intent relative to its model-page audience — ${best.signals} signals from ${formatNumber(best.users)} users.`,
       );
     }
   }
