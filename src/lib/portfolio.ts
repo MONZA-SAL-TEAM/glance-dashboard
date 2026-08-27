@@ -1,4 +1,5 @@
 import { format, subDays } from "date-fns";
+import { cached } from "./cache";
 import {
   dateRangesFor,
   dimensionValue,
@@ -7,13 +8,16 @@ import {
   metricNumber,
   propertyPath,
 } from "./ga";
-import { fetchAllSiteSignalTotals } from "./signals";
+import { runHealthChecks } from "./health";
+import { fetchSignalOverview } from "./signals";
 import { KNOWN_SITES, PORTFOLIO_ORDER } from "./sites";
-import type {
-  DateRangeKey,
-  PortfolioPayload,
-  PortfolioSite,
-  TrafficFilter,
+import {
+  emptyBreakdown,
+  type DateRangeKey,
+  type HealthPayload,
+  type PortfolioPayload,
+  type PortfolioSite,
+  type TrafficFilter,
 } from "./types";
 
 function rangeDays(range: DateRangeKey): number {
@@ -24,11 +28,25 @@ function rangeDays(range: DateRangeKey): number {
 
 const PROPERTY_TIMEZONE = "Asia/Beirut";
 
+export function getCachedHealth(): Promise<HealthPayload> {
+  return cached("health:full", 15 * 60_000, runHealthChecks);
+}
+
+/** Health for the portfolio: served from cache, never allowed to block the
+ * page — if a fresh run is still in flight past the deadline the cards show
+ * "checking…" and the next request hits the warm cache. */
+function healthWithDeadline(ms: number): Promise<HealthPayload | null> {
+  return Promise.race([
+    getCachedHealth().catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 /**
  * The three-site home screen: per property, one summary report (current +
  * previous window) and one daily-users report for the sparkline, plus a single
- * Supabase call shared by all cards. Sites fail independently — one property's
- * GA error must not blank the other two cards.
+ * Supabase call shared by all cards (totals + all-sites demand). Sites fail
+ * independently — one property's GA error must not blank the other two cards.
  */
 export async function fetchPortfolio(
   range: DateRangeKey,
@@ -48,10 +66,10 @@ export async function fetchPortfolio(
   const geoFilter = geoFilterFor(filter);
   const days = rangeDays(range);
 
-  const signalsPromise = fetchAllSiteSignalTotals(range).then(
-    (totals) => ({ totals, error: undefined as string | undefined }),
+  const signalsPromise = fetchSignalOverview(range).then(
+    (overview) => ({ overview, error: undefined as string | undefined }),
     (error) => ({
-      totals: new Map() as Awaited<ReturnType<typeof fetchAllSiteSignalTotals>>,
+      overview: null,
       error: error instanceof Error ? error.message : "Signals unavailable",
     }),
   );
@@ -68,11 +86,12 @@ export async function fetchPortfolio(
       prevUsers: 0,
       sessions: 0,
       signals: 0,
+      highIntent: 0,
       prevSignals: 0,
-      whatsapp: 0,
-      instagram: 0,
+      byType: emptyBreakdown(),
       signalRate: null,
       spark: [],
+      health: null,
     };
 
     try {
@@ -132,27 +151,114 @@ export async function fetchPortfolio(
     return base;
   });
 
-  const [sites, signalsResult] = await Promise.all([
+  const [sites, signalsResult, health] = await Promise.all([
     Promise.all(sitePromises),
     signalsPromise,
+    healthWithDeadline(3500),
   ]);
 
   for (const site of sites) {
-    const totals = signalsResult.totals.get(site.domain);
-    if (!totals) continue;
-    site.signals = totals.total;
-    site.whatsapp = totals.whatsapp;
-    site.instagram = totals.instagram;
-    site.prevSignals = totals.previousTotal;
-    site.signalRate =
-      !site.error && site.users > 0 ? (totals.total / site.users) * 100 : null;
+    const totals = signalsResult.overview?.totalsBySite.get(site.domain);
+    if (totals) {
+      site.signals = totals.total;
+      site.highIntent = totals.highIntent;
+      site.byType = totals.byType;
+      site.prevSignals = totals.previousTotal;
+      site.signalRate =
+        !site.error && site.users > 0
+          ? (totals.total / site.users) * 100
+          : null;
+    }
+    site.health =
+      health?.sites.find((h) => h.site === site.domain) ?? null;
   }
 
+  const demand = signalsResult.overview?.demand ?? [];
   return {
     range,
     filter,
     fetchedAt: new Date().toISOString(),
     sites,
+    demand,
+    // The top model is deliberately not an insight — it already leads the
+    // headline tiles and the demand board. "This period" carries changes,
+    // anomalies, and health only.
+    insights: buildInsights(sites, health, signalsResult.error),
     signalsError: signalsResult.error,
+    healthError: health ? undefined : "health check still running",
   };
+}
+
+function pctLabel(current: number, previous: number): string | null {
+  if (!Number.isFinite(previous) || previous <= 0) return null;
+  const change = ((current - previous) / previous) * 100;
+  if (Math.abs(change) < 0.5) return "flat";
+  return `${change > 0 ? "up" : "down"} ${Math.abs(change).toFixed(0)}%`;
+}
+
+/** The home screen's 3–5 lines: what happened, what people want, is anything
+ * broken. Deterministic and grounded — never speculative. */
+function buildInsights(
+  sites: PortfolioSite[],
+  health: HealthPayload | null,
+  signalsError: string | undefined,
+): string[] {
+  const insights: string[] = [];
+  const gaOk = sites.filter((s) => !s.error);
+
+  const users = gaOk.reduce((a, s) => a + s.users, 0);
+  const prevUsers = gaOk.reduce((a, s) => a + s.prevUsers, 0);
+  const usersDelta = pctLabel(users, prevUsers);
+  if (gaOk.length < sites.length) {
+    insights.push(
+      `GA data unavailable for ${sites.length - gaOk.length} of ${sites.length} sites — traffic numbers are partial.`,
+    );
+  } else if (usersDelta) {
+    insights.push(
+      `Total site users ${usersDelta} vs the previous period (${users} summed across the three sites).`,
+    );
+  }
+
+  if (!signalsError) {
+    const signals = sites.reduce((a, s) => a + s.signals, 0);
+    const prevSignals = sites.reduce((a, s) => a + s.prevSignals, 0);
+    const signalsDelta = pctLabel(signals, prevSignals);
+    if (signalsDelta) {
+      insights.push(`Intent signals ${signalsDelta} (${signals} in this period).`);
+    }
+    for (const s of sites) {
+      if (!s.error && s.prevSignals >= 5 && s.signals === 0) {
+        insights.push(
+          `${s.name} recorded zero signals after ${s.prevSignals} last period — check tracking before assuming demand fell.`,
+        );
+      }
+    }
+  }
+
+  let biggestMove: { site: PortfolioSite; change: number } | null = null;
+  for (const s of gaOk) {
+    if (s.prevUsers < 20) continue;
+    const change = ((s.users - s.prevUsers) / s.prevUsers) * 100;
+    if (Math.abs(change) >= 15 && (!biggestMove || Math.abs(change) > Math.abs(biggestMove.change))) {
+      biggestMove = { site: s, change };
+    }
+  }
+  if (biggestMove) {
+    insights.push(
+      `${biggestMove.site.name} traffic ${biggestMove.change > 0 ? "up" : "down"} ${Math.abs(biggestMove.change).toFixed(0)}% (${biggestMove.site.prevUsers} → ${biggestMove.site.users} users).`,
+    );
+  }
+
+  if (health) {
+    const troubled = health.sites.filter(
+      (h) => h.status === "warning" || h.status === "critical",
+    );
+    insights.push(
+      troubled.length === 0
+        ? "No tracking issues detected on monitored pages."
+        : `${troubled.length} site${troubled.length > 1 ? "s have" : " has"} tracking warnings — see tracking health below.`,
+    );
+  }
+
+  return insights.slice(0, 5);
 }

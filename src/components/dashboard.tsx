@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { DeadUrlsPanel } from "@/components/deadurls-panel";
+import { DemandBoard } from "@/components/demand-board";
 import { MetricTile } from "@/components/metric-tile";
-import { PortfolioPanel } from "@/components/portfolio-panel";
+import { HealthDetails, PortfolioPanel } from "@/components/portfolio-panel";
 import { RankList } from "@/components/rank-list";
 import { RealtimePanel } from "@/components/realtime-panel";
 import { SignalsPanel } from "@/components/signals-panel";
@@ -18,6 +20,7 @@ import {
 } from "@/lib/format";
 import type {
   DateRangeKey,
+  DeadUrlsPayload,
   OverviewPayload,
   PortfolioPayload,
   RealtimePayload,
@@ -33,6 +36,9 @@ const FILTER_STORAGE_KEY = "glance_traffic_filter";
 /** Sentinel "site" for the all-sites portfolio home view. */
 const ALL_SITES = "all";
 
+/** The dead-URL report is Monza-specific (legacy WordPress paths). */
+const MONZA_PROPERTY_ID = "547222815";
+
 export function Dashboard() {
   const [sites, setSites] = useState<SiteProperty[]>([]);
   const [propertyId, setPropertyId] = useState("");
@@ -44,16 +50,19 @@ export function Dashboard() {
   const [realtime, setRealtime] = useState<RealtimePayload | null>(null);
   const [signals, setSignals] = useState<SignalsPayload | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(null);
+  const [deadUrls, setDeadUrls] = useState<DeadUrlsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [signalsError, setSignalsError] = useState<string | null>(null);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
+  const [deadUrlsError, setDeadUrlsError] = useState<string | null>(null);
   const [sitesWarning, setSitesWarning] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingRealtime, setLoadingRealtime] = useState(true);
   const [loadingSignals, setLoadingSignals] = useState(true);
   const [loadingPortfolio, setLoadingPortfolio] = useState(true);
+  const [loadingDeadUrls, setLoadingDeadUrls] = useState(true);
   // URL/storage params are adopted on mount; fetches wait for that to finish
   // so the first render doesn't fire requests for state about to change.
   const [ready, setReady] = useState(false);
@@ -65,6 +74,7 @@ export function Dashboard() {
   const signalsSeq = useRef(0);
   const realtimeSeq = useRef(0);
   const portfolioSeq = useRef(0);
+  const deadUrlsSeq = useRef(0);
 
   // Adopt shareable URL state (?site=voyah&range=28d&filter=lb), falling back
   // to the per-browser stored filter. Runs once; fetch effects wait on `ready`.
@@ -266,6 +276,32 @@ export function Dashboard() {
     [],
   );
 
+  const loadDeadUrls = useCallback(async (nextRange: DateRangeKey) => {
+    const seq = ++deadUrlsSeq.current;
+    setLoadingDeadUrls(true);
+    try {
+      const res = await fetch(`/api/deadurls?range=${nextRange}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `Dead URL report failed (${res.status})`);
+      }
+      const data = (await res.json()) as DeadUrlsPayload;
+      if (seq !== deadUrlsSeq.current) return;
+      setDeadUrls(data);
+      setDeadUrlsError(null);
+    } catch (err) {
+      if (seq !== deadUrlsSeq.current) return;
+      setDeadUrls(null);
+      setDeadUrlsError(
+        err instanceof Error ? err.message : "Dead URL report unavailable",
+      );
+    } finally {
+      if (seq === deadUrlsSeq.current) setLoadingDeadUrls(false);
+    }
+  }, []);
+
   const isPortfolio = propertyId === ALL_SITES;
 
   useEffect(() => {
@@ -274,6 +310,11 @@ export function Dashboard() {
       void loadOverview(range, propertyId, filter);
     });
   }, [ready, range, propertyId, filter, loadOverview]);
+
+  useEffect(() => {
+    if (!ready || propertyId !== MONZA_PROPERTY_ID) return;
+    void loadDeadUrls(range);
+  }, [ready, range, propertyId, loadDeadUrls]);
 
   useEffect(() => {
     if (!ready || !propertyId || propertyId === ALL_SITES) return;
@@ -324,6 +365,28 @@ export function Dashboard() {
       ? (signals.total / metrics.users) * 100
       : null;
 
+  // Portfolio payload is only rendered when it matches the selected range +
+  // filter; the home-screen headline numbers derive from it.
+  const gatedPortfolio =
+    portfolio && portfolio.range === range && portfolio.filter === filter
+      ? portfolio
+      : null;
+  const pfGaOk = gatedPortfolio?.sites.filter((s) => !s.error) ?? [];
+  const pfUsers = pfGaOk.reduce((a, s) => a + s.users, 0);
+  const pfPrevUsers = pfGaOk.reduce((a, s) => a + s.prevUsers, 0);
+  const pfSignals = gatedPortfolio
+    ? gatedPortfolio.sites.reduce((a, s) => a + s.signals, 0)
+    : 0;
+  const pfPrevSignals = gatedPortfolio
+    ? gatedPortfolio.sites.reduce((a, s) => a + s.prevSignals, 0)
+    : 0;
+  const pfSignalsOk = Boolean(gatedPortfolio && !gatedPortfolio.signalsError);
+  const pfRate =
+    pfSignalsOk && pfUsers > 0 && pfGaOk.length === gatedPortfolio?.sites.length
+      ? (pfSignals / pfUsers) * 100
+      : null;
+  const pfTopModel = pfSignalsOk ? (gatedPortfolio?.demand[0] ?? null) : null;
+
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-8 pt-[max(1.25rem,env(safe-area-inset-top))] sm:px-6 sm:py-8 md:px-8 md:py-10">
       <header className="animate-rise mb-6 flex flex-col gap-4 sm:mb-8 sm:gap-6 md:mb-10 md:flex-row md:items-end md:justify-between">
@@ -340,8 +403,8 @@ export function Dashboard() {
             {activeSite?.name || "Your website, clearly."}
           </h1>
           <p className="mt-2 max-w-lg text-sm leading-relaxed text-ink-soft sm:mt-3 sm:text-base">
-            Live Google Analytics plus first-party WhatsApp &amp; Instagram signals.
-            Realtime refreshes every 15s.
+            Live Google Analytics plus first-party intent signals and tracking
+            health. Realtime refreshes every 15s.
           </p>
         </div>
 
@@ -354,6 +417,7 @@ export function Dashboard() {
                 setOverview(null);
                 setRealtime(null);
                 setSignals(null);
+                setDeadUrls(null);
                 setPropertyId(id);
               }}
             />
@@ -425,21 +489,99 @@ export function Dashboard() {
       ) : null}
 
       {isPortfolio ? (
-        <PortfolioPanel
-          data={
-            portfolio && portfolio.range === range && portfolio.filter === filter
-              ? portfolio
-              : null
-          }
-          loading={loadingPortfolio}
-          error={portfolioError}
-          onOpenSite={(id) => {
-            setOverview(null);
-            setRealtime(null);
-            setSignals(null);
-            setPropertyId(id);
-          }}
-        />
+        <>
+          {gatedPortfolio ? (
+            <div className="mb-3 grid grid-cols-2 gap-3 sm:mb-4 sm:gap-4 lg:grid-cols-4">
+              <MetricTile
+                label="Total site users"
+                value={
+                  pfGaOk.length === gatedPortfolio.sites.length
+                    ? formatNumber(pfUsers)
+                    : "—"
+                }
+                hint={`${rangeLabel(range)} · summed across sites`}
+                delta={
+                  pfGaOk.length === gatedPortfolio.sites.length
+                    ? formatDelta(pfUsers, pfPrevUsers)
+                    : null
+                }
+                delayClass="animate-rise-delay-1"
+              />
+              <MetricTile
+                label="Signals"
+                value={pfSignalsOk ? formatNumber(pfSignals) : "—"}
+                hint="all intent actions, all sites"
+                delta={pfSignalsOk ? formatDelta(pfSignals, pfPrevSignals) : null}
+                accent="coral"
+                delayClass="animate-rise-delay-1"
+              />
+              <MetricTile
+                label="Signals / 100 users"
+                value={pfRate === null ? "—" : pfRate.toFixed(1)}
+                hint="one visitor can send several signals"
+                accent="ink"
+                delayClass="animate-rise-delay-2"
+              />
+              <MetricTile
+                label="Top model"
+                value={pfTopModel ? pfTopModel.vehicle : "—"}
+                hint={
+                  pfTopModel
+                    ? `${formatNumber(pfTopModel.total)} signals · directional`
+                    : undefined
+                }
+                delayClass="animate-rise-delay-2"
+              />
+            </div>
+          ) : null}
+
+          {gatedPortfolio && gatedPortfolio.insights.length > 0 ? (
+            <section className="panel animate-rise mb-3 rounded-2xl p-4 sm:mb-4 sm:rounded-3xl sm:p-5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-soft">
+                This period
+              </p>
+              <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-ink">
+                {gatedPortfolio.insights.map((line, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-teal" />
+                    <span className="min-w-0">{line}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          <PortfolioPanel
+            data={gatedPortfolio}
+            loading={loadingPortfolio}
+            error={portfolioError}
+            onOpenSite={(id) => {
+              setOverview(null);
+              setRealtime(null);
+              setSignals(null);
+              setDeadUrls(null);
+              setPropertyId(id);
+            }}
+          />
+
+          {gatedPortfolio && !gatedPortfolio.signalsError ? (
+            <div className="mt-3 sm:mt-4">
+              <DemandBoard demand={gatedPortfolio.demand} delayClass="animate-rise-delay-2" />
+            </div>
+          ) : null}
+
+          {gatedPortfolio ? (
+            <div className="mt-3 sm:mt-4">
+              <HealthDetails
+                sites={gatedPortfolio.sites.map((s) => ({
+                  name: s.name,
+                  health: s.health,
+                }))}
+                delayClass="animate-rise-delay-3"
+              />
+            </div>
+          ) : null}
+        </>
       ) : (
         <>
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-[1.1fr_0.9fr]">
@@ -497,9 +639,9 @@ export function Dashboard() {
             delayClass="animate-rise-delay-4"
           />
           <MetricTile
-            label="Signal rate"
-            value={signalRate === null ? "—" : `${signalRate.toFixed(1)}%`}
-            hint="WhatsApp + Instagram clicks ÷ users"
+            label="Signals / 100 users"
+            value={signalRate === null ? "—" : signalRate.toFixed(1)}
+            hint="one visitor can send several signals"
             accent="coral"
             delayClass="animate-rise-delay-4"
           />
@@ -508,7 +650,7 @@ export function Dashboard() {
             value={signals ? formatNumber(signals.total) : "—"}
             hint={
               signals
-                ? `${formatNumber(signals.whatsapp)} WhatsApp · ${formatNumber(signals.instagram)} Instagram`
+                ? `${formatNumber(signals.highIntent)} high-intent (WhatsApp · phone · form)`
                 : signalsError
                   ? "Signals unavailable"
                   : undefined
@@ -534,6 +676,17 @@ export function Dashboard() {
           delayClass="animate-rise-delay-2"
         />
       </div>
+
+      {propertyId === MONZA_PROPERTY_ID ? (
+        <div className="mt-3 sm:mt-4">
+          <DeadUrlsPanel
+            data={deadUrls && deadUrls.range === range ? deadUrls : null}
+            loading={loadingDeadUrls}
+            error={deadUrlsError}
+            delayClass="animate-rise-delay-3"
+          />
+        </div>
+      ) : null}
 
       <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
         <RankList
@@ -608,9 +761,10 @@ export function Dashboard() {
               traffic&rdquo; for unfiltered GA4 numbers.
             </li>
             <li>
-              <span className="font-medium text-ink">Signals</span> — WhatsApp and
-              Instagram clicks recorded by the sites themselves into the Monza
-              database. They never pass through GA4 and are not geo-filtered.
+              <span className="font-medium text-ink">Signals</span> — intent actions
+              recorded first-party by the sites: WhatsApp, phone and form
+              (high-intent) plus model click-outs and Instagram (broader demand).
+              They never pass through GA4 and are not geo-filtered.
             </li>
             <li>
               <span className="font-medium text-ink">Deltas</span> — every ▲▼ compares

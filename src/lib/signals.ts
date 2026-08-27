@@ -1,23 +1,33 @@
 import { format, startOfWeek, subDays } from "date-fns";
-import type {
-  DateRangeKey,
-  SignalModelRow,
-  SignalsPayload,
-  SignalWeekRow,
+import {
+  emptyBreakdown,
+  EVENT_TYPES,
+  HIGH_INTENT_TYPES,
+  type DateRangeKey,
+  type DemandRow,
+  type EventType,
+  type SignalBreakdown,
+  type SignalModelRow,
+  type SignalsPayload,
+  type SignalWeekRow,
 } from "./types";
 
 /**
- * First-party interest signals (WhatsApp / Instagram clicks) captured by
- * lead-capture.js on the sites and stored in the Monza SAL APP Supabase.
- * Read through the aggregate-only RPC `glance_signal_stats` — it returns
- * daily counts per site/model, never row-level or personal data, so the
- * publishable (public) key is sufficient.
+ * First-party intent signals captured by the sites into the Monza SAL APP
+ * Supabase, read through the aggregate-only RPC `glance_signal_stats` (daily
+ * counts per site/type/model — never row-level or personal data).
+ *
+ * Access: the publishable key alone works only while the DB-side token gate
+ * is dormant. Once `signals_token_required` is activated in glance_config,
+ * every call must carry GLANCE_SIGNALS_TOKEN (server-side env; the browser
+ * never sees it — these fetches all run in API routes).
  */
 const SUPABASE_URL =
   process.env.SUPABASE_URL || "https://okxpsvukzjjubinhamek.supabase.co";
 const SUPABASE_KEY =
   process.env.SUPABASE_PUBLISHABLE_KEY ||
   "sb_publishable_xS7t2B_E2mTpx-NrddvOeQ_RQJp6kBg";
+const SIGNALS_TOKEN = process.env.GLANCE_SIGNALS_TOKEN || null;
 
 interface SignalStatRow {
   day: string;
@@ -37,108 +47,154 @@ function isoDay(date: Date): string {
   return format(date, "yyyy-MM-dd");
 }
 
-async function fetchSignalRows(days: number): Promise<SignalStatRow[]> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/glance_signal_stats`, {
+function isEventType(value: string): value is EventType {
+  return (EVENT_TYPES as readonly string[]).includes(value);
+}
+
+export async function supabaseRpc<T>(
+  fn: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: "POST",
     headers: {
       apikey: SUPABASE_KEY,
       Authorization: `Bearer ${SUPABASE_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ p_days: days }),
+    body: JSON.stringify(body),
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
-
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    console.error(`glance_signal_stats failed (${res.status}): ${body.slice(0, 500)}`);
+    const text = await res.text().catch(() => "");
+    console.error(`${fn} failed (${res.status}): ${text.slice(0, 500)}`);
     throw new Error(
       res.status === 404
-        ? "Signals source not ready: the glance_signal_stats function is not deployed to Supabase yet."
-        : `Signals query failed (${res.status})`,
+        ? `Signals source not ready: ${fn} is not deployed to Supabase yet.`
+        : res.status === 401 || res.status === 403
+          ? `Signals access denied — check GLANCE_SIGNALS_TOKEN.`
+          : `Signals query failed (${res.status})`,
     );
   }
+  return (await res.json()) as T;
+}
 
-  return (await res.json()) as SignalStatRow[];
+async function fetchSignalRows(days: number): Promise<SignalStatRow[]> {
+  return supabaseRpc<SignalStatRow[]>("glance_signal_stats", {
+    p_days: days,
+    ...(SIGNALS_TOKEN ? { p_token: SIGNALS_TOKEN } : {}),
+  });
 }
 
 export interface SiteSignalTotals {
   total: number;
-  whatsapp: number;
-  instagram: number;
+  highIntent: number;
+  byType: SignalBreakdown;
   previousTotal: number;
 }
 
-/**
- * Signal totals for every site at once — one RPC call for the portfolio view.
- * Windows mirror fetchSignals below.
- */
-export async function fetchAllSiteSignalTotals(
-  range: DateRangeKey,
-): Promise<Map<string, SiteSignalTotals>> {
+export interface SignalOverview {
+  totalsBySite: Map<string, SiteSignalTotals>;
+  /** All-sites model demand for the current window (normalized names). */
+  demand: DemandRow[];
+}
+
+function windowBounds(range: DateRangeKey) {
   const days = rangeDays(range);
+  // Anchor to the property timezone (like ga.ts) so the signals window and
+  // GA's "NdaysAgo..today" window roll to a new day at the same moment.
+  const todayIso = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Beirut",
+  }).format(new Date());
+  const today = new Date(`${todayIso}T00:00:00`);
+  return {
+    days,
+    currentStart: isoDay(subDays(today, days)),
+    previousStart: isoDay(subDays(today, days * 2 + 1)),
+    previousEnd: isoDay(subDays(today, days + 1)),
+  };
+}
+
+/**
+ * One RPC call powering the portfolio: per-site totals/breakdowns plus the
+ * combined all-sites model demand board.
+ */
+export async function fetchSignalOverview(
+  range: DateRangeKey,
+): Promise<SignalOverview> {
+  const { days, currentStart, previousStart, previousEnd } =
+    windowBounds(range);
   const rows = await fetchSignalRows(days * 2 + 2);
 
-  const today = new Date();
-  const currentStart = isoDay(subDays(today, days));
-  const previousStart = isoDay(subDays(today, days * 2 + 1));
-  const previousEnd = isoDay(subDays(today, days + 1));
-  const wanted = new Set(["whatsapp_click", "instagram_click"]);
+  const totalsBySite = new Map<string, SiteSignalTotals>();
+  const demandByVehicle = new Map<string, DemandRow>();
 
-  const bySite = new Map<string, SiteSignalTotals>();
   for (const row of rows) {
-    if (!wanted.has(row.event_type)) continue;
+    if (!isEventType(row.event_type)) continue;
     const n = Number(row.n) || 0;
     const totals =
-      bySite.get(row.site) ??
-      ({ total: 0, whatsapp: 0, instagram: 0, previousTotal: 0 } as SiteSignalTotals);
+      totalsBySite.get(row.site) ??
+      ({
+        total: 0,
+        highIntent: 0,
+        byType: emptyBreakdown(),
+        previousTotal: 0,
+      } as SiteSignalTotals);
+
     if (row.day >= currentStart) {
       totals.total += n;
-      if (row.event_type === "whatsapp_click") totals.whatsapp += n;
-      else totals.instagram += n;
+      totals.byType[row.event_type] += n;
+      if (HIGH_INTENT_TYPES.includes(row.event_type)) totals.highIntent += n;
+
+      // Untagged signals count toward totals but not the demand board —
+      // "unspecified" is not a vehicle and would otherwise rank first.
+      if (row.vehicle !== "unspecified") {
+        const demand =
+          demandByVehicle.get(row.vehicle) ??
+          ({ vehicle: row.vehicle, total: 0, bySite: {} } as DemandRow);
+        demand.total += n;
+        demand.bySite[row.site] = (demand.bySite[row.site] ?? 0) + n;
+        demandByVehicle.set(row.vehicle, demand);
+      }
     } else if (row.day >= previousStart && row.day <= previousEnd) {
       totals.previousTotal += n;
     }
-    bySite.set(row.site, totals);
+    totalsBySite.set(row.site, totals);
   }
-  return bySite;
+
+  const demand = [...demandByVehicle.values()].sort(
+    (a, b) => b.total - a.total,
+  );
+  return { totalsBySite, demand };
 }
 
 export async function fetchSignals(
   range: DateRangeKey,
   siteDomain: string,
 ): Promise<SignalsPayload> {
-  const days = rangeDays(range);
+  const { days, currentStart, previousStart, previousEnd } =
+    windowBounds(range);
   const rows = await fetchSignalRows(days * 2 + 2);
 
-  // Mirror GA's "NdaysAgo..today" window (N+1 days inclusive) and the
-  // equally sized window immediately before it.
-  const today = new Date();
-  const currentStart = isoDay(subDays(today, days));
-  const previousStart = isoDay(subDays(today, days * 2 + 1));
-  const previousEnd = isoDay(subDays(today, days + 1));
-
-  // One population for every number on the panel — a future event type must be
-  // added here deliberately, not leak into some aggregates and not others.
-  const wanted = new Set(["whatsapp_click", "instagram_click"]);
   const siteRows = rows.filter(
-    (r) => r.site === siteDomain && wanted.has(r.event_type),
+    (r) => r.site === siteDomain && isEventType(r.event_type),
   );
   const current = siteRows.filter((r) => r.day >= currentStart);
   const previous = siteRows.filter(
     (r) => r.day >= previousStart && r.day <= previousEnd,
   );
 
-  let whatsapp = 0;
-  let instagram = 0;
+  const byType = emptyBreakdown();
+  let highIntent = 0;
   const modelCounts = new Map<string, number>();
-  const weekBuckets = new Map<string, { whatsapp: number; instagram: number }>();
+  const weekBuckets = new Map<string, SignalWeekRow>();
 
   for (const row of current) {
+    if (!isEventType(row.event_type)) continue;
     const n = Number(row.n) || 0;
-    if (row.event_type === "whatsapp_click") whatsapp += n;
-    else if (row.event_type === "instagram_click") instagram += n;
+    byType[row.event_type] += n;
+    if (HIGH_INTENT_TYPES.includes(row.event_type)) highIntent += n;
 
     const vehicle = row.vehicle === "unspecified" ? "(no model)" : row.vehicle;
     modelCounts.set(vehicle, (modelCounts.get(vehicle) ?? 0) + n);
@@ -146,9 +202,17 @@ export async function fetchSignals(
     const week = isoDay(
       startOfWeek(new Date(`${row.day}T00:00:00`), { weekStartsOn: 1 }),
     );
-    const bucket = weekBuckets.get(week) ?? { whatsapp: 0, instagram: 0 };
-    if (row.event_type === "whatsapp_click") bucket.whatsapp += n;
-    else if (row.event_type === "instagram_click") bucket.instagram += n;
+    const bucket =
+      weekBuckets.get(week) ??
+      ({
+        weekStart: week,
+        total: 0,
+        highIntent: 0,
+        byType: emptyBreakdown(),
+      } as SignalWeekRow);
+    bucket.total += n;
+    bucket.byType[row.event_type] += n;
+    if (HIGH_INTENT_TYPES.includes(row.event_type)) bucket.highIntent += n;
     weekBuckets.set(week, bucket);
   }
 
@@ -156,19 +220,23 @@ export async function fetchSignals(
     .map(([vehicle, count]) => ({ vehicle, count }))
     .sort((a, b) => b.count - a.count);
 
-  const byWeek: SignalWeekRow[] = [...weekBuckets.entries()]
-    .map(([weekStart, counts]) => ({ weekStart, ...counts }))
-    .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  const byWeek: SignalWeekRow[] = [...weekBuckets.values()].sort((a, b) =>
+    a.weekStart.localeCompare(b.weekStart),
+  );
 
-  const previousTotal = previous.reduce((sum, r) => sum + (Number(r.n) || 0), 0);
+  const previousTotal = previous.reduce(
+    (sum, r) => sum + (Number(r.n) || 0),
+    0,
+  );
+  const total = (Object.values(byType) as number[]).reduce((a, b) => a + b, 0);
 
   return {
     site: siteDomain,
     range,
     fetchedAt: new Date().toISOString(),
-    total: whatsapp + instagram,
-    whatsapp,
-    instagram,
+    total,
+    highIntent,
+    byType,
     previousTotal,
     byModel,
     byWeek,

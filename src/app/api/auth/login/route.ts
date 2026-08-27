@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { expectedAuthCookie } from "@/lib/auth-token";
 
 export async function POST(request: NextRequest) {
   const password = process.env.DASHBOARD_PASSWORD;
@@ -12,8 +13,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Wrong password" }, { status: 401 });
   }
 
+  const cookieValue = await expectedAuthCookie();
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("glance_auth", "1", {
+  response.cookies.set("glance_auth", cookieValue ?? "", {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

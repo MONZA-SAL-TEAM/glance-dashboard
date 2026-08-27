@@ -34,3 +34,9 @@ export function cached<T>(
 
   return entry.value as Promise<T>;
 }
+
+/** Store an already-computed value (e.g. a fresh scheduled run) so same-
+ * instance readers see it instead of an older cached entry. */
+export function prime<T>(key: string, ttlMs: number, value: T): void {
+  store.set(key, { expires: Date.now() + ttlMs, value: Promise.resolve(value) });
+}

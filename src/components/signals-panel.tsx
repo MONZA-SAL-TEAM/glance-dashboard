@@ -1,5 +1,9 @@
 import { formatDelta, formatNumber } from "@/lib/format";
-import type { SignalsPayload } from "@/lib/types";
+import {
+  EVENT_TYPE_LABELS,
+  EVENT_TYPES,
+  type SignalsPayload,
+} from "@/lib/types";
 
 interface SignalsPanelProps {
   data: SignalsPayload | null;
@@ -84,7 +88,8 @@ export function SignalsPanel({
             Interest signals
           </h2>
           <p className="mt-1 text-sm text-ink-soft">
-            WhatsApp &amp; Instagram clicks captured on-site — first-party data, not GA4
+            First-party intent captured on-site (not GA4): WhatsApp, phone, form,
+            model click-outs, Instagram
           </p>
         </div>
         {delta ? (
@@ -120,20 +125,33 @@ export function SignalsPanel({
             </div>
             <div>
               <p className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-teal-deep sm:text-4xl">
-                {rate === null ? "—" : `${rate.toFixed(1)}%`}
+                {formatNumber(data.highIntent)}
               </p>
               <p className="mt-1 text-xs text-ink-soft">
-                signal rate (signals ÷ users)
+                high-intent (WhatsApp + phone + form)
               </p>
             </div>
-            <div className="flex gap-2 pb-1">
-              <span className="rounded-full bg-teal/15 px-3 py-1 text-xs font-semibold text-teal-deep">
-                {formatNumber(data.whatsapp)} WhatsApp
-              </span>
-              <span className="rounded-full bg-coral/15 px-3 py-1 text-xs font-semibold text-coral">
-                {formatNumber(data.instagram)} Instagram
-              </span>
+            <div>
+              <p className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+                {rate === null ? "—" : rate.toFixed(1)}
+              </p>
+              <p className="mt-1 text-xs text-ink-soft">
+                signals per 100 users
+              </p>
             </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {EVENT_TYPES.map((type) =>
+              data.byType[type] > 0 || type === "whatsapp_click" ? (
+                <span
+                  key={type}
+                  className="rounded-full bg-sand/70 px-3 py-1 text-xs font-semibold text-ink"
+                >
+                  {formatNumber(data.byType[type])} {EVENT_TYPE_LABELS[type]}
+                </span>
+              ) : null,
+            )}
           </div>
 
           <div className="mt-5 grid gap-6 sm:mt-6 sm:grid-cols-2">
@@ -157,8 +175,8 @@ export function SignalsPanel({
                 color="coral"
                 items={data.byWeek.map((w) => ({
                   label: weekLabel(w.weekStart),
-                  value: w.whatsapp + w.instagram,
-                  detail: `${w.whatsapp} WA · ${w.instagram} IG`,
+                  value: w.total,
+                  detail: `${w.highIntent} high-intent`,
                 }))}
               />
             </div>
