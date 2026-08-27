@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { DeadUrlsPanel } from "@/components/deadurls-panel";
 import { DemandBoard } from "@/components/demand-board";
 import { MetricTile } from "@/components/metric-tile";
-import { ModelPages } from "@/components/model-pages";
+import { ModelPerformance } from "@/components/model-performance";
 import { HealthDetails, PortfolioPanel } from "@/components/portfolio-panel";
 import { RankList } from "@/components/rank-list";
 import { RealtimePanel } from "@/components/realtime-panel";
@@ -40,6 +40,9 @@ const ALL_SITES = "all";
 
 /** The dead-URL report is Monza-specific (legacy WordPress paths). */
 const MONZA_PROPERTY_ID = "547222815";
+
+/** Brand sites that publish per-model pages (Monza's are brand hubs). */
+const MODEL_PROPERTY_IDS = ["541962515", "540543412"];
 
 export function Dashboard() {
   const [sites, setSites] = useState<SiteProperty[]>([]);
@@ -309,12 +312,16 @@ export function Dashboard() {
   }, []);
 
   const loadModelPages = useCallback(
-    async (nextRange: DateRangeKey, nextFilter: TrafficFilter) => {
+    async (
+      nextRange: DateRangeKey,
+      nextFilter: TrafficFilter,
+      nextProperty: string,
+    ) => {
       const seq = ++modelPagesSeq.current;
       setLoadingModelPages(true);
       try {
         const res = await fetch(
-          `/api/models?range=${nextRange}&filter=${nextFilter}`,
+          `/api/models?range=${nextRange}&filter=${nextFilter}&property=${encodeURIComponent(nextProperty)}`,
           { cache: "no-store" },
         );
         if (!res.ok) {
@@ -339,6 +346,7 @@ export function Dashboard() {
   );
 
   const isPortfolio = propertyId === ALL_SITES;
+  const isModelSite = MODEL_PROPERTY_IDS.includes(propertyId);
 
   useEffect(() => {
     if (!ready || !propertyId || propertyId === ALL_SITES) return;
@@ -365,8 +373,8 @@ export function Dashboard() {
   }, [ready, propertyId, range, filter, loadPortfolio]);
 
   useEffect(() => {
-    if (!ready || propertyId !== ALL_SITES) return;
-    void loadModelPages(range, filter);
+    if (!ready || !MODEL_PROPERTY_IDS.includes(propertyId)) return;
+    void loadModelPages(range, filter, propertyId);
   }, [ready, propertyId, range, filter, loadModelPages]);
 
   useEffect(() => {
@@ -611,21 +619,6 @@ export function Dashboard() {
             </div>
           ) : null}
 
-          <div className="mt-3 sm:mt-4">
-            <ModelPages
-              data={
-                modelPages &&
-                modelPages.range === range &&
-                modelPages.filter === filter
-                  ? modelPages
-                  : null
-              }
-              loading={loadingModelPages}
-              error={modelPagesError}
-              delayClass="animate-rise-delay-3"
-            />
-          </div>
-
           {gatedPortfolio ? (
             <div className="mt-3 sm:mt-4">
               <HealthDetails
@@ -718,9 +711,25 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="mt-3 sm:mt-4">
-        <TrafficChart data={overview?.timeseries ?? []} />
-      </div>
+      {/* Model performance leads the brand dashboards: the automotive
+          question comes before generic web analytics. */}
+      {isModelSite ? (
+        <div className="mt-3 sm:mt-4">
+          <ModelPerformance
+            data={
+              modelPages &&
+              modelPages.range === range &&
+              modelPages.filter === filter &&
+              modelPages.propertyId === propertyId
+                ? modelPages
+                : null
+            }
+            loading={loadingModelPages}
+            error={modelPagesError}
+            delayClass="animate-rise-delay-1"
+          />
+        </div>
+      ) : null}
 
       <div className="mt-3 sm:mt-4">
         <SignalsPanel
@@ -731,6 +740,10 @@ export function Dashboard() {
           geoFiltered={filter === "lb"}
           delayClass="animate-rise-delay-2"
         />
+      </div>
+
+      <div className="mt-3 sm:mt-4">
+        <TrafficChart data={overview?.timeseries ?? []} />
       </div>
 
       {propertyId === MONZA_PROPERTY_ID ? (
@@ -770,17 +783,6 @@ export function Dashboard() {
 
       <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
         <RankList
-          title="Top pages"
-          subtitle="What people actually open"
-          delayClass="animate-rise-delay-3"
-          valueLabel="views"
-          items={(overview?.pages ?? []).map((p) => ({
-            label: p.path,
-            sublabel: `${formatNumber(p.users)} users`,
-            value: p.views,
-          }))}
-        />
-        <RankList
           title={overview?.geoKind === "city" ? "Cities" : "Countries"}
           subtitle={
             overview?.geoKind === "city"
@@ -793,9 +795,6 @@ export function Dashboard() {
             value: g.users,
           }))}
         />
-      </div>
-
-      <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
         <RankList
           title="Devices"
           subtitle="Desktop, mobile, tablet split"
@@ -805,6 +804,41 @@ export function Dashboard() {
             value: d.users,
           }))}
         />
+      </div>
+
+      {/* The full URL list is reference material, not a decision surface. */}
+      <details className="panel animate-rise animate-rise-delay-4 mt-3 rounded-2xl p-4 sm:mt-4 sm:rounded-3xl sm:p-5 md:p-6">
+        <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-ink">
+          View page details
+          <span className="font-normal text-ink-soft">
+            · every page by views
+          </span>
+          <span className="ml-auto text-xs font-normal text-ink-soft">▾</span>
+        </summary>
+        <div className="mt-4">
+          <ul className="space-y-2 text-sm">
+            {(overview?.pages ?? []).length === 0 ? (
+              <li className="text-ink-soft">No page data for this range.</li>
+            ) : (
+              (overview?.pages ?? []).map((p) => (
+                <li
+                  key={p.path}
+                  className="flex items-baseline justify-between gap-3 border-b border-[var(--line)] pb-2"
+                >
+                  <span className="min-w-0 flex-1 truncate text-ink [overflow-wrap:anywhere]">
+                    {p.path}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-ink-soft">
+                    {formatNumber(p.views)} views · {formatNumber(p.users)} users
+                  </span>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      </details>
+
+      <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
         <section className="panel animate-rise animate-rise-delay-4 rounded-2xl p-4 sm:rounded-3xl sm:p-5 md:p-6">
           <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight text-ink sm:text-xl">
             About this data

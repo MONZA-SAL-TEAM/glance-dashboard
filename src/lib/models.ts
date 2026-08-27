@@ -94,16 +94,25 @@ function emptyAgg(): PageAgg {
 export async function fetchModelPages(
   range: DateRangeKey,
   filter: TrafficFilter,
+  propertyId?: string,
 ): Promise<ModelPagesPayload> {
   const client = getClient();
   const { current, previous } = dateRangesFor(range);
   const geoFilter = geoFilterFor(filter);
 
+  // Scoped to one brand dashboard, or all model sites for the portfolio.
+  const sites = propertyId
+    ? MODEL_SITES.filter((s) => s.propertyId === propertyId)
+    : MODEL_SITES;
+  const scopedDomain = propertyId
+    ? MODEL_SITES.find((s) => s.propertyId === propertyId)?.domain
+    : undefined;
+
   const byModel = new Map<string, PageAgg>();
   const unmapped = new Set<string>();
 
   await Promise.all(
-    MODEL_SITES.map(async (site) => {
+    sites.map(async (site) => {
       const property = propertyPath(site.propertyId);
 
       // Traffic: current + previous window in one request.
@@ -177,7 +186,15 @@ export async function fetchModelPages(
   try {
     const overview = await fetchSignalOverview(range);
     signalsByModel = new Map(
-      overview.demand.map((d) => [d.vehicle, d.total] as const),
+      overview.demand.map(
+        (d) =>
+          [
+            d.vehicle,
+            // A brand dashboard counts that site's own signals; the
+            // portfolio counts the model's demand wherever it happened.
+            scopedDomain ? (d.bySite[scopedDomain] ?? 0) : d.total,
+          ] as const,
+      ),
     );
   } catch (error) {
     signalsError =
@@ -210,6 +227,7 @@ export async function fetchModelPages(
       sessions: agg.sessions,
       prevUsers: agg.prevUsers,
       usersChange,
+      viewsPerUser: agg.users > 0 ? agg.views / agg.users : null,
       engagementRate,
       signals,
       // Intent relative to the size of the audience that read the page.
@@ -224,6 +242,7 @@ export async function fetchModelPages(
     range,
     filter,
     fetchedAt: new Date().toISOString(),
+    propertyId,
     rows,
     unmappedPaths: [...unmapped].slice(0, 10),
     signalsError,

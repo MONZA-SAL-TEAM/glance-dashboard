@@ -265,9 +265,12 @@ export interface ModelPageRow {
   prevUsers: number;
   /** % change in users vs the previous period; null when there's no base. */
   usersChange: number | null;
+  /** Views ÷ users — how deeply the people who arrived actually browsed. */
+  viewsPerUser: number | null;
   /** Engaged sessions ÷ sessions on the model page, as a percentage. */
   engagementRate: number | null;
-  /** First-party intent signals attributed to this model (any site). */
+  /** First-party intent signals attributed to this model. Site-scoped on a
+   * brand dashboard, all-sites on the portfolio. */
   signals: number;
   /** Signals ÷ model-page users × 100 — approximate: a signal can originate
    * off the model page (e.g. a Monza hub click-out). */
@@ -278,6 +281,8 @@ export interface ModelPagesPayload {
   range: DateRangeKey;
   filter: TrafficFilter;
   fetchedAt: string;
+  /** Set when scoped to one brand site; absent for the all-sites view. */
+  propertyId?: string;
   rows: ModelPageRow[];
   /** Model-looking paths that matched no mapping rule — surfaced so a new
    * model page cannot go silently uncounted. */

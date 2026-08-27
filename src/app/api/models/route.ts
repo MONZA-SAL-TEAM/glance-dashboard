@@ -19,8 +19,11 @@ export async function GET(request: NextRequest) {
   try {
     const range = parseRange(request.nextUrl.searchParams.get("range"));
     const filter = parseFilter(request.nextUrl.searchParams.get("filter"));
-    const data = await cached(`models:${range}:${filter}`, 10 * 60_000, () =>
-      fetchModelPages(range, filter),
+    const property = request.nextUrl.searchParams.get("property") || undefined;
+    const data = await cached(
+      `models:${property ?? "all"}:${range}:${filter}`,
+      10 * 60_000,
+      () => fetchModelPages(range, filter, property),
     );
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
