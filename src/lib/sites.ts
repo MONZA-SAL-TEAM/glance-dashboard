@@ -27,6 +27,31 @@ export const KNOWN_SITES: Record<string, KnownSite> = {
 /** Display order for the portfolio view: brand sites first, corporate last. */
 export const PORTFOLIO_ORDER = ["541962515", "540543412", "547222815"];
 
+/**
+ * The actual vehicles. Anything else a signal carries — "VOYAH", "MHERO",
+ * "the Monza lineup" — is brand-level interest recorded when no specific
+ * model was in context, and must not be ranked as if it were a model.
+ * Keep in step with PATH_RULES in src/lib/models.ts (the test script asserts
+ * every mapped label appears here).
+ */
+export const CANONICAL_MODELS = [
+  "VOYAH Free",
+  "VOYAH Free+",
+  "VOYAH Dream",
+  "VOYAH Passion",
+  "VOYAH Passion L",
+  "VOYAH Courage",
+  "VOYAH Taishan",
+  "MHERO 1",
+  "MHERO 2",
+] as const;
+
+const MODEL_SET: ReadonlySet<string> = new Set(CANONICAL_MODELS);
+
+export function isCanonicalModel(vehicle: string): boolean {
+  return MODEL_SET.has(vehicle);
+}
+
 export function aliasToPropertyId(alias: string): string | null {
   const entry = Object.entries(KNOWN_SITES).find(
     ([, site]) => site.alias === alias.toLowerCase(),
