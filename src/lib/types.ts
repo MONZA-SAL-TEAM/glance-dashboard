@@ -349,6 +349,73 @@ export interface SocialAudience {
   gender: SocialAudienceRow[];
 }
 
+export interface AdCampaignRow {
+  account: string;
+  id: string;
+  name: string;
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  /** Form/pixel leads. */
+  leads: number;
+  /** Messaging conversations started — a real result for a dealership. */
+  messages: number;
+  /** leads + messages. */
+  results: number;
+  /** spend ÷ results; null when nothing converted. */
+  costPerResult: number | null;
+}
+
+export interface AdsSummary {
+  configured: boolean;
+  campaigns: AdCampaignRow[];
+  spend: number;
+  leads: number;
+  clicks: number;
+  impressions: number;
+  reach: number;
+}
+
+export interface SocialComment {
+  id: string;
+  profile: string;
+  permalink: string;
+  username: string;
+  text: string;
+  timestamp: string;
+  likes: number;
+}
+
+export interface HashtagRow {
+  tag: string;
+  topMediaCount: number;
+  totalLikes: number;
+  totalComments: number;
+  topPermalink: string;
+}
+
+export interface MentionRow {
+  id: string;
+  username: string;
+  caption: string;
+  permalink: string;
+  timestamp: string;
+  likes: number;
+  comments: number;
+}
+
+export interface CompetitorRow {
+  handle: string;
+  followers: number;
+  posts: number;
+  recentLikes: number;
+  recentComments: number;
+  avgEngagementPerPost: number;
+}
+
 export interface SocialPayload {
   range: DateRangeKey;
   fetchedAt: string;
@@ -359,6 +426,11 @@ export interface SocialPayload {
   profiles: SocialProfile[];
   posts: SocialPost[];
   audience: SocialAudience;
+  ads: AdsSummary;
+  comments: SocialComment[];
+  hashtags: HashtagRow[];
+  mentions: MentionRow[];
+  competitors: CompetitorRow[];
   /** Anything that could not be fetched, stated rather than shown as zero. */
   notes: string[];
 }

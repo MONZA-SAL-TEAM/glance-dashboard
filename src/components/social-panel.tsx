@@ -1,6 +1,7 @@
 "use client";
 
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import { SocialExtra } from "@/components/social-extra";
 import { formatChartDate, formatNumber } from "@/lib/format";
 import type {
   SocialAudienceRow,
@@ -224,7 +225,9 @@ export function SocialPanel({
             — optional, defaults to v21.0
           </li>
         </ul>
-        {data.notes.length > 0 ? (
+        <SocialExtra data={data} />
+
+      {data.notes.length > 0 ? (
           <ul className="mt-4 space-y-1 text-[11px] text-ink-soft/80">
             {data.notes.map((n, i) => (
               <li key={i}>{n}</li>

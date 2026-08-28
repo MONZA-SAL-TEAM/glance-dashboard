@@ -1,8 +1,21 @@
 import { format, subDays } from "date-fns";
+import { fetchAds } from "./meta-ads";
+import {
+  fetchCompetitors,
+  fetchComments,
+  fetchHashtags,
+  fetchMentions,
+  listeningConfig,
+} from "./meta-listening";
 import { rangeDays } from "./ranges";
 import type {
+  AdsSummary,
+  CompetitorRow,
   DateRangeKey,
+  HashtagRow,
+  MentionRow,
   SocialAudience,
+  SocialComment,
   SocialAudienceRow,
   SocialPayload,
   SocialPost,
@@ -28,6 +41,8 @@ const TOKEN = process.env.META_ACCESS_TOKEN || "";
 
 export interface MetaProfileConfig {
   label: string;
+  /** Marketing API ad account, e.g. act_1234567890. */
+  adAccountId?: string;
   /** Instagram Business/Creator account id — not the @handle. */
   igUserId?: string;
   /** Facebook Page id. */
@@ -45,14 +60,15 @@ export function metaProfiles(): MetaProfileConfig[] {
         label: p.label || p.name || "Profile",
         igUserId: p.ig_user_id || p.igUserId,
         pageId: p.page_id || p.pageId,
+        adAccountId: p.ad_account_id || p.adAccountId,
       }))
-      .filter((p) => p.igUserId || p.pageId);
+      .filter((p) => p.igUserId || p.pageId || p.adAccountId);
   } catch {
     return [];
   }
 }
 
-async function graph<T>(
+export async function graph<T>(
   path: string,
   params: Record<string, string> = {},
 ): Promise<T> {
@@ -75,7 +91,7 @@ async function graph<T>(
 }
 
 /** Runs a call, recording the reason instead of throwing. */
-async function attempt<T>(
+export async function attempt<T>(
   label: string,
   notes: string[],
   fn: () => Promise<T>,
@@ -379,6 +395,15 @@ export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
     age: [],
     gender: [],
   };
+  const emptyAds: AdsSummary = {
+    configured: false,
+    campaigns: [],
+    spend: 0,
+    leads: 0,
+    clicks: 0,
+    impressions: 0,
+    reach: 0,
+  };
 
   if (!TOKEN || profiles.length === 0) {
     return {
@@ -389,6 +414,11 @@ export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
       profiles: [],
       posts: [],
       audience: emptyAudience,
+      ads: emptyAds,
+      comments: [],
+      hashtags: [],
+      mentions: [],
+      competitors: [],
       notes: [
         !TOKEN ? "META_ACCESS_TOKEN is not set." : "",
         profiles.length === 0
@@ -435,6 +465,33 @@ export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
   }
 
   allPosts.sort((a, b) => b.interactions - a.interactions);
+  const topPosts = allPosts.slice(0, 20);
+
+  // Paid, listening and benchmarking run alongside each other; each already
+  // records its own failures, so one dead area never blocks the others.
+  const { hashtags: wantedTags, competitors: wantedCompetitors } =
+    listeningConfig();
+  const firstIg = profiles.find((p) => p.igUserId);
+
+  const [ads, comments, hashtags, mentions, competitors] = await Promise.all([
+    fetchAds(since, until, notes),
+    fetchComments(
+      topPosts
+        .filter((p) => p.network === "instagram")
+        .slice(0, 8)
+        .map((p) => ({ id: p.id, profile: p.profile, permalink: p.permalink })),
+      notes,
+    ),
+    firstIg && wantedTags.length
+      ? fetchHashtags(firstIg.igUserId as string, wantedTags, notes)
+      : Promise.resolve([] as HashtagRow[]),
+    firstIg
+      ? fetchMentions(firstIg.igUserId as string, firstIg.label, notes)
+      : Promise.resolve([] as MentionRow[]),
+    firstIg && wantedCompetitors.length
+      ? fetchCompetitors(firstIg.igUserId as string, wantedCompetitors, notes)
+      : Promise.resolve([] as CompetitorRow[]),
+  ]);
 
   return {
     range,
@@ -442,8 +499,13 @@ export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
     configured: true,
     windowDays: days,
     profiles: built,
-    posts: allPosts.slice(0, 20),
+    posts: topPosts,
     audience,
+    ads,
+    comments,
+    hashtags,
+    mentions,
+    competitors,
     notes,
   };
 }
