@@ -9,6 +9,7 @@ import { HealthDetails, PortfolioPanel } from "@/components/portfolio-panel";
 import { RankList } from "@/components/rank-list";
 import { RealtimePanel } from "@/components/realtime-panel";
 import { SignalsPanel } from "@/components/signals-panel";
+import { SocialPanel } from "@/components/social-panel";
 import { SiteSwitcher } from "@/components/site-switcher";
 import { TrafficChart } from "@/components/traffic-chart";
 import { RANGE_KEYS, RANGE_SHORT, isRangeKey } from "@/lib/ranges";
@@ -29,6 +30,7 @@ import type {
   RealtimePayload,
   SignalsPayload,
   SiteProperty,
+  SocialPayload,
   TrafficFilter,
 } from "@/lib/types";
 
@@ -41,6 +43,9 @@ const ALL_SITES = "all";
 
 /** The dead-URL report is Monza-specific (legacy WordPress paths). */
 const MONZA_PROPERTY_ID = "547222815";
+
+/** Sentinel "site" for the Instagram + Facebook view. */
+const SOCIAL_VIEW = "social";
 
 /** Brand sites that publish per-model pages (Monza's are brand hubs). */
 const MODEL_PROPERTY_IDS = ["541962515", "540543412"];
@@ -57,6 +62,9 @@ export function Dashboard() {
   const [signals, setSignals] = useState<SignalsPayload | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(null);
   const [deadUrls, setDeadUrls] = useState<DeadUrlsPayload | null>(null);
+  const [social, setSocial] = useState<SocialPayload | null>(null);
+  const [socialError, setSocialError] = useState<string | null>(null);
+  const [loadingSocial, setLoadingSocial] = useState(true);
   const [modelPages, setModelPages] = useState<ModelPagesPayload | null>(null);
   const [modelPagesError, setModelPagesError] = useState<string | null>(null);
   const [loadingModelPages, setLoadingModelPages] = useState(true);
@@ -85,6 +93,7 @@ export function Dashboard() {
   const portfolioSeq = useRef(0);
   const deadUrlsSeq = useRef(0);
   const modelPagesSeq = useRef(0);
+  const socialSeq = useRef(0);
 
   // Adopt shareable URL state (?site=voyah&range=28d&filter=lb), falling back
   // to the per-browser stored filter. Runs once; fetch effects wait on `ready`.
@@ -95,7 +104,9 @@ export function Dashboard() {
       const rangeParam = params.get("range");
       const filterParam = params.get("filter");
 
-      if (siteParam && siteParam !== ALL_SITES) {
+      if (siteParam === SOCIAL_VIEW) {
+        setPropertyId(SOCIAL_VIEW);
+      } else if (siteParam && siteParam !== ALL_SITES) {
         setPropertyId(aliasToPropertyId(siteParam) ?? siteParam);
       } else {
         setPropertyId(ALL_SITES);
@@ -127,7 +138,9 @@ export function Dashboard() {
     if (!ready || !propertyId) return;
     try {
       const site =
-        propertyId === ALL_SITES ? ALL_SITES : propertyIdToAlias(propertyId);
+        propertyId === ALL_SITES || propertyId === SOCIAL_VIEW
+          ? propertyId
+          : propertyIdToAlias(propertyId);
       window.history.replaceState(
         null,
         "",
@@ -346,15 +359,45 @@ export function Dashboard() {
     [],
   );
 
+  const loadSocial = useCallback(async (nextRange: DateRangeKey) => {
+    const seq = ++socialSeq.current;
+    setLoadingSocial(true);
+    try {
+      const res = await fetch(`/api/social?range=${nextRange}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `Social feed failed (${res.status})`);
+      }
+      const data = (await res.json()) as SocialPayload;
+      if (seq !== socialSeq.current) return;
+      setSocial(data);
+      setSocialError(null);
+    } catch (err) {
+      if (seq !== socialSeq.current) return;
+      setSocial(null);
+      setSocialError(err instanceof Error ? err.message : "Social unavailable");
+    } finally {
+      if (seq === socialSeq.current) setLoadingSocial(false);
+    }
+  }, []);
+
+  const isSocial = propertyId === SOCIAL_VIEW;
   const isPortfolio = propertyId === ALL_SITES;
   const isModelSite = MODEL_PROPERTY_IDS.includes(propertyId);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES) return;
+    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW) return;
     startTransition(() => {
       void loadOverview(range, propertyId, filter);
     });
   }, [ready, range, propertyId, filter, loadOverview]);
+
+  useEffect(() => {
+    if (!ready || propertyId !== SOCIAL_VIEW) return;
+    void loadSocial(range);
+  }, [ready, propertyId, range, loadSocial]);
 
   useEffect(() => {
     if (!ready || propertyId !== MONZA_PROPERTY_ID) return;
@@ -362,12 +405,15 @@ export function Dashboard() {
   }, [ready, range, propertyId, loadDeadUrls]);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES) return;
+    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW) return;
     void loadSignals(range, propertyId);
   }, [ready, range, propertyId, loadSignals]);
 
+  // The social view also needs portfolio data: it reports how many Instagram
+  // click-outs those audiences actually produced on the sites.
   useEffect(() => {
-    if (!ready || propertyId !== ALL_SITES) return;
+    if (!ready || (propertyId !== ALL_SITES && propertyId !== SOCIAL_VIEW))
+      return;
     startTransition(() => {
       void loadPortfolio(range, filter);
     });
@@ -379,7 +425,7 @@ export function Dashboard() {
   }, [ready, propertyId, range, filter, loadModelPages]);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES) return;
+    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW) return;
 
     let cancelled = false;
     const tick = () => {
@@ -402,8 +448,11 @@ export function Dashboard() {
   const switcherSites: SiteProperty[] = [
     { id: ALL_SITES, name: "All sites", url: "portfolio" },
     ...sites,
+    { id: SOCIAL_VIEW, name: "Social", url: "Instagram & Facebook" },
   ];
-  const activeSite = isPortfolio
+  const activeSite = isSocial
+    ? { id: SOCIAL_VIEW, name: "Social" }
+    : isPortfolio
     ? { id: ALL_SITES, name: "All sites" }
     : sites.find((s) => s.id === propertyId) ||
       (overview
@@ -562,7 +611,21 @@ export function Dashboard() {
         </div>
       ) : null}
 
-      {isPortfolio ? (
+      {isSocial ? (
+        <SocialPanel
+          data={social && social.range === range ? social : null}
+          loading={loadingSocial}
+          error={socialError}
+          instagramSignals={
+            gatedPortfolio && !gatedPortfolio.signalsError
+              ? gatedPortfolio.sites.reduce(
+                  (a, s) => a + s.byType.instagram_click,
+                  0,
+                )
+              : undefined
+          }
+        />
+      ) : isPortfolio ? (
         <>
           {gatedPortfolio ? (
             <div className="mb-3 grid grid-cols-2 gap-3 sm:mb-4 sm:gap-4 lg:grid-cols-4">

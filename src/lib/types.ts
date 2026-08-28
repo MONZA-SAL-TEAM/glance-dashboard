@@ -295,6 +295,74 @@ export interface ModelPagesPayload {
   signalsError?: string;
 }
 
+/* ------------------------------ social ------------------------------- */
+
+export type SocialNetwork = "instagram" | "facebook";
+
+export interface SocialSeriesPoint {
+  date: string;
+  reach: number;
+  views: number;
+}
+
+export interface SocialProfile {
+  label: string;
+  network: SocialNetwork;
+  handle?: string;
+  followers: number;
+  /** Lifetime post count where the network reports it. */
+  posts: number;
+  reach: number;
+  views: number;
+  profileViews: number;
+  websiteClicks: number;
+  engaged: number;
+  series: SocialSeriesPoint[];
+}
+
+export interface SocialPost {
+  network: SocialNetwork;
+  profile: string;
+  id: string;
+  caption: string;
+  /** FEED / REELS / STORY / POST, as the network reports it. */
+  type: string;
+  permalink: string;
+  timestamp: string;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  reach: number;
+  interactions: number;
+}
+
+export interface SocialAudienceRow {
+  label: string;
+  value: number;
+}
+
+export interface SocialAudience {
+  cities: SocialAudienceRow[];
+  countries: SocialAudienceRow[];
+  age: SocialAudienceRow[];
+  gender: SocialAudienceRow[];
+}
+
+export interface SocialPayload {
+  range: DateRangeKey;
+  fetchedAt: string;
+  /** False when Meta credentials are absent; the UI then shows setup steps. */
+  configured: boolean;
+  /** Days actually covered — Meta caps insight windows below our longer ranges. */
+  windowDays: number;
+  profiles: SocialProfile[];
+  posts: SocialPost[];
+  audience: SocialAudience;
+  /** Anything that could not be fetched, stated rather than shown as zero. */
+  notes: string[];
+}
+
 /* ------------------------------ digest ------------------------------- */
 
 export interface DigestSiteSummary {
