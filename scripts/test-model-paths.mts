@@ -1,4 +1,5 @@
 import { modelForPath } from "../src/lib/models";
+import { isCanonicalModel } from "../src/lib/sites";
 
 const cases: Array<[string, string | null]> = [
   // VOYAH — canonical
@@ -59,3 +60,15 @@ if (modelForPath("/models/passion") === modelForPath("/models/passion-l")) {
   process.exit(1);
 }
 console.log("ordering check: passion vs passion-l distinct — OK");
+
+// Every label a path can map to must be in CANONICAL_MODELS, or the demand
+// board would silently file that model under "brand-level interest".
+const mapped = new Set(
+  cases.map(([input]) => modelForPath(input)).filter((v): v is string => v !== null),
+);
+const missing = [...mapped].filter((label) => !isCanonicalModel(label));
+if (missing.length) {
+  console.log(`FAIL: mapped labels missing from CANONICAL_MODELS: ${missing.join(", ")}`);
+  process.exit(1);
+}
+console.log(`canonical-model coverage: ${mapped.size} mapped labels all recognised — OK`);
