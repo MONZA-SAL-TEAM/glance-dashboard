@@ -36,7 +36,7 @@ import type {
  *     the browser and is scrubbed from any error text.
  */
 
-const API_VERSION = process.env.META_API_VERSION || "v21.0";
+const API_VERSION = process.env.META_API_VERSION || "v24.0";
 const TOKEN = process.env.META_ACCESS_TOKEN || "";
 
 export interface MetaProfileConfig {

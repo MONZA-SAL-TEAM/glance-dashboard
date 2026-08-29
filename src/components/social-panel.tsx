@@ -222,7 +222,7 @@ export function SocialPanel({
           </li>
           <li>
             <code className="rounded bg-sand px-1.5 py-0.5 text-ink">META_API_VERSION</code>{" "}
-            — optional, defaults to v21.0
+            — optional, defaults to v24.0
           </li>
         </ul>
         <SocialExtra data={data} />

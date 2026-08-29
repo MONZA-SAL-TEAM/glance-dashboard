@@ -13,7 +13,7 @@ environment only, exactly like `GLANCE_SIGNALS_TOKEN`.
 |---|---|---|
 | `META_ACCESS_TOKEN` | yes | Long-lived Page or System-User access token |
 | `META_PROFILES` | yes | JSON list of the accounts to report on |
-| `META_API_VERSION` | no | Graph API version, defaults to `v21.0` |
+| `META_API_VERSION` | no | Graph API version, defaults to `v24.0` |
 | `META_HASHTAGS` | no | Tags to track, e.g. `["monzasal","voyahlebanon"]` |
 | `META_COMPETITORS` | no | Public IG business handles to benchmark against |
 
