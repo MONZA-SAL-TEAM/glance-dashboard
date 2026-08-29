@@ -71,10 +71,14 @@ export function metaProfiles(): MetaProfileConfig[] {
 export async function graph<T>(
   path: string,
   params: Record<string, string> = {},
+  /** Page-scoped token for the endpoints Meta refuses to serve to a
+   * user or system-user token — Page insights and published_posts both
+   * answer (#210) without one. */
+  token: string = TOKEN,
 ): Promise<T> {
   const url = new URL(`https://graph.facebook.com/${API_VERSION}/${path}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  url.searchParams.set("access_token", TOKEN);
+  url.searchParams.set("access_token", token);
 
   const res = await fetch(url, {
     cache: "no-store",
@@ -84,8 +88,12 @@ export async function graph<T>(
     error?: { message?: string };
   };
   if (!res.ok || body.error) {
-    const raw = body.error?.message || `HTTP ${res.status}`;
-    throw new Error(TOKEN ? raw.split(TOKEN).join("[token]") : raw);
+    let raw = body.error?.message || `HTTP ${res.status}`;
+    // Both secrets, since the note this becomes is rendered in the browser.
+    for (const secret of [token, TOKEN]) {
+      if (secret) raw = raw.split(secret).join("[token]");
+    }
+    throw new Error(raw);
   }
   return body as T;
 }
@@ -113,6 +121,7 @@ interface InsightEntry {
   name: string;
   values?: InsightValue[];
   total_value?: {
+    value?: number;
     breakdowns?: Array<{
       results?: Array<{ dimension_values: string[]; value: number }>;
     }>;
@@ -125,6 +134,16 @@ function sumSeries(entry: InsightEntry | undefined): number {
     (a, v) => a + (typeof v.value === "number" ? v.value : 0),
     0,
   );
+}
+
+/**
+ * Total-value metrics answer with a single number instead of a daily series,
+ * so summing `values` would silently read them as zero.
+ */
+function metricTotal(entry: InsightEntry | undefined): number {
+  if (entry?.values?.length) return sumSeries(entry);
+  const value = entry?.total_value?.value;
+  return typeof value === "number" ? value : 0;
 }
 
 function seriesOf(entry: InsightEntry | undefined): Map<string, number> {
@@ -165,29 +184,36 @@ async function instagramProfile(
     }>(id, { fields: "username,followers_count,media_count" }),
   );
 
-  // `views` superseded `impressions` for Instagram. Try the modern metric
-  // set first and fall back, so this works on either API vintage.
-  const modern = await attempt(`${cfg.label} · IG daily insights`, notes, () =>
+  // Instagram insights come in two families that cannot share a request:
+  // `reach` is a daily time series, while views / profile_views /
+  // website_clicks / accounts_engaged are totals and must carry
+  // metric_type=total_value. Asking for them together fails the whole call
+  // with (#100) and takes reach down with it — which is exactly how every
+  // number on this panel read zero. Two calls, failing independently.
+  const timeSeries = await attempt(
+    `${cfg.label} · IG reach`,
+    notes,
+    () =>
+      graph<{ data: InsightEntry[] }>(`${id}/insights`, {
+        metric: "reach",
+        period: "day",
+        since,
+        until,
+      }),
+  );
+
+  const totals = await attempt(`${cfg.label} · IG totals`, notes, () =>
     graph<{ data: InsightEntry[] }>(`${id}/insights`, {
-      metric: "reach,views,profile_views,website_clicks,accounts_engaged",
+      metric: "views,profile_views,website_clicks,accounts_engaged",
+      metric_type: "total_value",
       period: "day",
       since,
       until,
     }),
   );
-  const legacy = modern
-    ? null
-    : await attempt(`${cfg.label} · IG daily insights (legacy)`, notes, () =>
-        graph<{ data: InsightEntry[] }>(`${id}/insights`, {
-          metric: "reach,impressions,profile_views,website_clicks",
-          period: "day",
-          since,
-          until,
-        }),
-      );
 
   const byName = new Map(
-    ((modern?.data ?? legacy?.data ?? []) as InsightEntry[]).map((e) => [
+    [...(timeSeries?.data ?? []), ...(totals?.data ?? [])].map((e) => [
       e.name,
       e,
     ]),
@@ -200,11 +226,11 @@ async function instagramProfile(
     handle: acct?.username ? `@${acct.username}` : undefined,
     followers: acct?.followers_count ?? 0,
     posts: acct?.media_count ?? 0,
-    reach: sumSeries(byName.get("reach")),
-    views: sumSeries(viewsEntry),
-    profileViews: sumSeries(byName.get("profile_views")),
-    websiteClicks: sumSeries(byName.get("website_clicks")),
-    engaged: sumSeries(byName.get("accounts_engaged")),
+    reach: metricTotal(byName.get("reach")),
+    views: metricTotal(viewsEntry),
+    profileViews: metricTotal(byName.get("profile_views")),
+    websiteClicks: metricTotal(byName.get("website_clicks")),
+    engaged: metricTotal(byName.get("accounts_engaged")),
     series: mergeSeries(seriesOf(byName.get("reach")), seriesOf(viewsEntry)),
   };
 }
@@ -299,6 +325,55 @@ async function instagramPosts(
   );
 }
 
+/**
+ * Page-scoped tokens, one fetch per Page per request.
+ *
+ * Page insights and published_posts both answer (#210) "a page access token
+ * is required" to a user or system-user token, no matter how it is scoped.
+ * The Page token is derived from the configured token rather than stored, so
+ * there is still exactly one secret in the environment.
+ */
+const pageTokens = new Map<string, Promise<string | null>>();
+
+function pageToken(
+  pageId: string,
+  label: string,
+  notes: string[],
+): Promise<string | null> {
+  const cached = pageTokens.get(pageId);
+  if (cached) return cached;
+  const pending = attempt(`${label} · FB page token`, notes, () =>
+    graph<{ access_token?: string }>(pageId, { fields: "access_token" }),
+  ).then((res) => res?.access_token ?? null);
+  pageTokens.set(pageId, pending);
+  return pending;
+}
+
+/**
+ * Page metrics are retired on Meta's schedule and a single dead name fails
+ * the whole request with (#100) "must be a valid insights metric" — which is
+ * how reach and engagement both read zero because of one bad third metric.
+ * One request per metric, so a retirement costs that number alone.
+ */
+async function facebookMetric(
+  pageId: string,
+  metric: string,
+  label: string,
+  since: string,
+  until: string,
+  token: string | null,
+  notes: string[],
+): Promise<InsightEntry | undefined> {
+  const res = await attempt(`${label} · FB ${metric}`, notes, () =>
+    graph<{ data: InsightEntry[] }>(
+      `${pageId}/insights`,
+      { metric, period: "day", since, until },
+      token ?? undefined,
+    ),
+  );
+  return res?.data?.[0];
+}
+
 async function facebookProfile(
   cfg: MetaProfileConfig,
   since: string,
@@ -313,15 +388,16 @@ async function facebookProfile(
     }),
   );
 
-  const daily = await attempt(`${cfg.label} · FB page insights`, notes, () =>
-    graph<{ data: InsightEntry[] }>(`${id}/insights`, {
-      metric: "page_impressions_unique,page_post_engagements,page_fan_adds",
-      period: "day",
-      since,
-      until,
-    }),
+  const token = await pageToken(id, cfg.label, notes);
+  const [reachEntry, engagedEntry] = await Promise.all([
+    facebookMetric(id, "page_impressions_unique", cfg.label, since, until, token, notes),
+    facebookMetric(id, "page_post_engagements", cfg.label, since, until, token, notes),
+  ]);
+  const byName = new Map(
+    [reachEntry, engagedEntry]
+      .filter((e): e is InsightEntry => Boolean(e))
+      .map((e) => [e.name, e]),
   );
-  const byName = new Map((daily?.data ?? []).map((e) => [e.name, e]));
 
   return {
     label: cfg.label,
@@ -329,11 +405,11 @@ async function facebookProfile(
     handle: page?.name,
     followers: page?.followers_count ?? page?.fan_count ?? 0,
     posts: 0,
-    reach: sumSeries(byName.get("page_impressions_unique")),
+    reach: metricTotal(byName.get("page_impressions_unique")),
     views: 0,
     profileViews: 0,
     websiteClicks: 0,
-    engaged: sumSeries(byName.get("page_post_engagements")),
+    engaged: metricTotal(byName.get("page_post_engagements")),
     series: mergeSeries(
       seriesOf(byName.get("page_impressions_unique")),
       new Map(),
@@ -347,6 +423,7 @@ async function facebookPosts(
   since: string,
   notes: string[],
 ): Promise<SocialPost[]> {
+  const token = await pageToken(pageId, label, notes);
   const res = await attempt(`${label} · FB posts`, notes, () =>
     graph<{ data: Array<Record<string, unknown>> }>(
       `${pageId}/published_posts`,
@@ -355,6 +432,7 @@ async function facebookPosts(
           "id,message,created_time,permalink_url,shares,reactions.summary(true).limit(0),comments.summary(true).limit(0)",
         limit: "25",
       },
+      token ?? undefined,
     ),
   );
 
