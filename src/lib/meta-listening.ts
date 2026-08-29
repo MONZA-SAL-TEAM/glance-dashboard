@@ -41,6 +41,7 @@ export function listeningConfig() {
  */
 export async function fetchComments(
   mediaIds: Array<{ id: string; profile: string; permalink: string }>,
+  token: string,
   notes: string[],
 ): Promise<SocialComment[]> {
   const out: SocialComment[] = [];
@@ -58,7 +59,9 @@ export async function fetchComments(
       }>(`${media.id}/comments`, {
         fields: "id,text,username,timestamp,like_count",
         limit: "10",
-      }),
+      },
+      token,
+      ),
     );
     for (const c of res?.data ?? []) {
       out.push({
@@ -84,6 +87,7 @@ export async function fetchComments(
 export async function fetchHashtags(
   igUserId: string,
   tags: string[],
+  token: string,
   notes: string[],
 ): Promise<HashtagRow[]> {
   const rows: HashtagRow[] = [];
@@ -92,7 +96,9 @@ export async function fetchHashtags(
       graph<{ data: Array<{ id: string }> }>("ig_hashtag_search", {
         user_id: igUserId,
         q: tag,
-      }),
+      },
+      token,
+      ),
     );
     const hashtagId = found?.data?.[0]?.id;
     if (!hashtagId) continue;
@@ -110,7 +116,9 @@ export async function fetchHashtags(
         user_id: igUserId,
         fields: "id,caption,like_count,comments_count,permalink",
         limit: "12",
-      }),
+      },
+      token,
+      ),
     );
 
     const items = media?.data ?? [];
@@ -130,6 +138,7 @@ export async function fetchHashtags(
 export async function fetchMentions(
   igUserId: string,
   label: string,
+  token: string,
   notes: string[],
 ): Promise<MentionRow[]> {
   const res = await attempt(`${label} · tagged media`, notes, () =>
@@ -146,7 +155,9 @@ export async function fetchMentions(
     }>(`${igUserId}/tags`, {
       fields: "id,username,caption,permalink,timestamp,like_count,comments_count",
       limit: "15",
-    }),
+    },
+    token,
+    ),
   );
   return (res?.data ?? []).map((m) => ({
     id: m.id,
@@ -167,6 +178,7 @@ export async function fetchMentions(
 export async function fetchCompetitors(
   igUserId: string,
   handles: string[],
+  token: string,
   notes: string[],
 ): Promise<CompetitorRow[]> {
   const rows: CompetitorRow[] = [];
@@ -183,7 +195,9 @@ export async function fetchCompetitors(
         };
       }>(igUserId, {
         fields: `business_discovery.username(${handle}){username,followers_count,media_count,media.limit(12){like_count,comments_count}}`,
-      }),
+      },
+      token,
+      ),
     );
     const bd = res?.business_discovery;
     if (!bd) continue;

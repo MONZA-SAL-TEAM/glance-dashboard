@@ -37,16 +37,44 @@ import type {
  */
 
 const API_VERSION = process.env.META_API_VERSION || "v24.0";
-const TOKEN = process.env.META_ACCESS_TOKEN || "";
+
+/**
+ * Read at call time, not captured at module load. A module-level constant is
+ * evaluated once on import, so anything that populates the environment later
+ * — a test harness, a lazily-loaded server bundle — sees an empty token and
+ * fails as though nothing were configured.
+ */
+function defaultToken(): string {
+  return process.env.META_ACCESS_TOKEN || "";
+}
 
 export interface MetaProfileConfig {
   label: string;
+  /** Which Social view this profile belongs to — one view per brand. */
+  brand: string;
+  /**
+   * The token this profile authenticates with. Brands that live in separate
+   * Meta business portfolios cannot share one: a token issued in the VOYAH
+   * portfolio has no visibility of MHERO's Page whatever it is scoped to.
+   */
+  token: string;
   /** Marketing API ad account, e.g. act_1234567890. */
   adAccountId?: string;
   /** Instagram Business/Creator account id — not the @handle. */
   igUserId?: string;
   /** Facebook Page id. */
   pageId?: string;
+}
+
+/** "VOYAH Lebanon" -> "voyah". Only used when `brand` is absent. */
+function brandSlug(label: string): string {
+  return (
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(" ")[0] || "social"
+  );
 }
 
 /** META_PROFILES mirrors the GA_PROPERTIES pattern already used for GA4. */
@@ -56,16 +84,53 @@ export function metaProfiles(): MetaProfileConfig[] {
   try {
     const parsed = JSON.parse(raw) as Array<Record<string, string>>;
     return parsed
-      .map((p) => ({
-        label: p.label || p.name || "Profile",
-        igUserId: p.ig_user_id || p.igUserId,
-        pageId: p.page_id || p.pageId,
-        adAccountId: p.ad_account_id || p.adAccountId,
-      }))
-      .filter((p) => p.igUserId || p.pageId || p.adAccountId);
+      .map((p) => {
+        const label = p.label || p.name || "Profile";
+        // token_env names the variable, never the value: a token pasted into
+        // META_PROFILES would sit in a field this code logs and renders.
+        const tokenEnv = p.token_env || p.tokenEnv;
+        const token =
+          (tokenEnv ? process.env[tokenEnv] : undefined) || defaultToken();
+        return {
+          label,
+          brand: (p.brand || brandSlug(label)).toLowerCase(),
+          token,
+          igUserId: p.ig_user_id || p.igUserId,
+          pageId: p.page_id || p.pageId,
+          adAccountId: p.ad_account_id || p.adAccountId,
+        };
+      })
+      .filter((p) => (p.igUserId || p.pageId || p.adAccountId) && p.token);
   } catch {
     return [];
   }
+}
+
+/** The Social views to offer, one per brand, in META_PROFILES order. */
+export function socialBrands(): Array<{ brand: string; label: string }> {
+  const seen = new Map<string, string>();
+  for (const p of metaProfiles()) {
+    if (seen.has(p.brand)) continue;
+    // "VOYAH Lebanon" -> "VOYAH": the view covers the brand, not one account.
+    seen.set(p.brand, p.label.split(" ")[0] || p.label);
+  }
+  return [...seen.entries()].map(([brand, label]) => ({ brand, label }));
+}
+
+/**
+ * Every value that must never reach the browser: the token in play plus any
+ * META_ACCESS_TOKEN* variable, so adding a second brand's token cannot
+ * quietly opt it out of scrubbing. Short values are ignored — a blank or
+ * placeholder would otherwise match everywhere and mangle the message.
+ */
+function knownSecrets(active?: string): string[] {
+  const out = new Set<string>();
+  if (active && active.length > 20) out.add(active);
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("META_ACCESS_TOKEN")) continue;
+    if (value && value.length > 20) out.add(value);
+  }
+  return [...out];
 }
 
 export async function graph<T>(
@@ -74,7 +139,7 @@ export async function graph<T>(
   /** Page-scoped token for the endpoints Meta refuses to serve to a
    * user or system-user token — Page insights and published_posts both
    * answer (#210) without one. */
-  token: string = TOKEN,
+  token: string = defaultToken(),
 ): Promise<T> {
   const url = new URL(`https://graph.facebook.com/${API_VERSION}/${path}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
@@ -89,9 +154,10 @@ export async function graph<T>(
   };
   if (!res.ok || body.error) {
     let raw = body.error?.message || `HTTP ${res.status}`;
-    // Both secrets, since the note this becomes is rendered in the browser.
-    for (const secret of [token, TOKEN]) {
-      if (secret) raw = raw.split(secret).join("[token]");
+    // Every configured token, since the note this becomes is rendered in the
+    // browser and Meta echoes the offending token back in some errors.
+    for (const secret of knownSecrets(token)) {
+      raw = raw.split(secret).join("[token]");
     }
     throw new Error(raw);
   }
@@ -181,7 +247,7 @@ async function instagramProfile(
       username?: string;
       followers_count?: number;
       media_count?: number;
-    }>(id, { fields: "username,followers_count,media_count" }),
+    }>(id, { fields: "username,followers_count,media_count" }, cfg.token),
   );
 
   // Instagram insights come in two families that cannot share a request:
@@ -194,22 +260,25 @@ async function instagramProfile(
     `${cfg.label} · IG reach`,
     notes,
     () =>
-      graph<{ data: InsightEntry[] }>(`${id}/insights`, {
-        metric: "reach",
-        period: "day",
-        since,
-        until,
-      }),
+      graph<{ data: InsightEntry[] }>(
+        `${id}/insights`,
+        { metric: "reach", period: "day", since, until },
+        cfg.token,
+      ),
   );
 
   const totals = await attempt(`${cfg.label} · IG totals`, notes, () =>
-    graph<{ data: InsightEntry[] }>(`${id}/insights`, {
-      metric: "views,profile_views,website_clicks,accounts_engaged",
-      metric_type: "total_value",
-      period: "day",
-      since,
-      until,
-    }),
+    graph<{ data: InsightEntry[] }>(
+      `${id}/insights`,
+      {
+        metric: "views,profile_views,website_clicks,accounts_engaged",
+        metric_type: "total_value",
+        period: "day",
+        since,
+        until,
+      },
+      cfg.token,
+    ),
   );
 
   const byName = new Map(
@@ -238,6 +307,7 @@ async function instagramProfile(
 async function instagramAudience(
   igUserId: string,
   label: string,
+  token: string,
   notes: string[],
 ): Promise<SocialAudience> {
   const pull = async (breakdown: string): Promise<SocialAudienceRow[]> => {
@@ -245,12 +315,16 @@ async function instagramAudience(
       `${label} · IG audience (${breakdown})`,
       notes,
       () =>
-        graph<{ data: InsightEntry[] }>(`${igUserId}/insights`, {
-          metric: "follower_demographics",
-          period: "lifetime",
-          metric_type: "total_value",
-          breakdown,
-        }),
+        graph<{ data: InsightEntry[] }>(
+          `${igUserId}/insights`,
+          {
+            metric: "follower_demographics",
+            period: "lifetime",
+            metric_type: "total_value",
+            breakdown,
+          },
+          token,
+        ),
     );
     const results = res?.data?.[0]?.total_value?.breakdowns?.[0]?.results ?? [];
     return results
@@ -272,6 +346,7 @@ async function instagramPosts(
   igUserId: string,
   label: string,
   since: string,
+  token: string,
   notes: string[],
 ): Promise<SocialPost[]> {
   const media = await attempt(`${label} · IG media`, notes, () =>
@@ -282,6 +357,7 @@ async function instagramPosts(
           "id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count",
         limit: "25",
       },
+      token,
     ),
   );
 
@@ -295,9 +371,11 @@ async function instagramPosts(
         `${label} · IG post insights`,
         notes,
         () =>
-          graph<{ data: InsightEntry[] }>(`${m.id}/insights`, {
-            metric: "reach,total_interactions,saved,shares",
-          }),
+          graph<{ data: InsightEntry[] }>(
+            `${m.id}/insights`,
+            { metric: "reach,total_interactions,saved,shares" },
+            token,
+          ),
       );
       const byName = new Map((ins?.data ?? []).map((e) => [e.name, e]));
       const val = (n: string) => {
@@ -338,14 +416,20 @@ const pageTokens = new Map<string, Promise<string | null>>();
 function pageToken(
   pageId: string,
   label: string,
+  userToken: string,
   notes: string[],
 ): Promise<string | null> {
-  const cached = pageTokens.get(pageId);
+  const key = `${pageId}:${userToken.slice(-12)}`;
+  const cached = pageTokens.get(key);
   if (cached) return cached;
   const pending = attempt(`${label} · FB page token`, notes, () =>
-    graph<{ access_token?: string }>(pageId, { fields: "access_token" }),
+    graph<{ access_token?: string }>(
+      pageId,
+      { fields: "access_token" },
+      userToken,
+    ),
   ).then((res) => res?.access_token ?? null);
-  pageTokens.set(pageId, pending);
+  pageTokens.set(key, pending);
   return pending;
 }
 
@@ -383,12 +467,14 @@ async function facebookProfile(
   const id = cfg.pageId as string;
 
   const page = await attempt(`${cfg.label} · FB page`, notes, () =>
-    graph<{ name?: string; followers_count?: number; fan_count?: number }>(id, {
-      fields: "name,followers_count,fan_count",
-    }),
+    graph<{ name?: string; followers_count?: number; fan_count?: number }>(
+      id,
+      { fields: "name,followers_count,fan_count" },
+      cfg.token,
+    ),
   );
 
-  const token = await pageToken(id, cfg.label, notes);
+  const token = await pageToken(id, cfg.label, cfg.token, notes);
   const [reachEntry, engagedEntry] = await Promise.all([
     facebookMetric(id, "page_impressions_unique", cfg.label, since, until, token, notes),
     facebookMetric(id, "page_post_engagements", cfg.label, since, until, token, notes),
@@ -421,9 +507,10 @@ async function facebookPosts(
   pageId: string,
   label: string,
   since: string,
+  userToken: string,
   notes: string[],
 ): Promise<SocialPost[]> {
-  const token = await pageToken(pageId, label, notes);
+  const token = await pageToken(pageId, label, userToken, notes);
   const res = await attempt(`${label} · FB posts`, notes, () =>
     graph<{ data: Array<Record<string, unknown>> }>(
       `${pageId}/published_posts`,
@@ -464,9 +551,19 @@ async function facebookPosts(
     });
 }
 
-export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
+/**
+ * One brand's Social view. Brands live in separate Meta business portfolios
+ * with separate tokens, so they are fetched apart rather than merged — a
+ * combined follower count across two unrelated brands answers no question
+ * anyone has, and one brand's broken token would take the other down.
+ */
+export async function fetchSocial(
+  range: DateRangeKey,
+  brand?: string,
+): Promise<SocialPayload> {
   const notes: string[] = [];
-  const profiles = metaProfiles();
+  const all = metaProfiles();
+  const profiles = brand ? all.filter((p) => p.brand === brand) : all;
   const emptyAudience: SocialAudience = {
     cities: [],
     countries: [],
@@ -483,7 +580,7 @@ export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
     reach: 0,
   };
 
-  if (!TOKEN || profiles.length === 0) {
+  if (profiles.length === 0) {
     return {
       range,
       fetchedAt: new Date().toISOString(),
@@ -498,10 +595,12 @@ export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
       mentions: [],
       competitors: [],
       notes: [
-        !TOKEN ? "META_ACCESS_TOKEN is not set." : "",
-        profiles.length === 0
-          ? "META_PROFILES is not set, or contains no profile with an Instagram account id or Page id."
+        !defaultToken() && !all.length
+          ? "META_ACCESS_TOKEN is not set."
           : "",
+        brand && all.length
+          ? `No profile in META_PROFILES has brand "${brand}".`
+          : "META_PROFILES is not set, or contains no profile with an Instagram account id or Page id, or the profile's token variable is empty.",
       ].filter(Boolean),
     };
   }
@@ -526,18 +625,35 @@ export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
     if (cfg.igUserId) {
       built.push(await instagramProfile(cfg, since, until, notes));
       allPosts.push(
-        ...(await instagramPosts(cfg.igUserId, cfg.label, since, notes)),
+        ...(await instagramPosts(
+          cfg.igUserId,
+          cfg.label,
+          since,
+          cfg.token,
+          notes,
+        )),
       );
       // Demographics are account-level; merging accounts would be
       // meaningless, so they come from the first Instagram profile.
       if (audience === emptyAudience) {
-        audience = await instagramAudience(cfg.igUserId, cfg.label, notes);
+        audience = await instagramAudience(
+          cfg.igUserId,
+          cfg.label,
+          cfg.token,
+          notes,
+        );
       }
     }
     if (cfg.pageId) {
       built.push(await facebookProfile(cfg, since, until, notes));
       allPosts.push(
-        ...(await facebookPosts(cfg.pageId, cfg.label, since, notes)),
+        ...(await facebookPosts(
+          cfg.pageId,
+          cfg.label,
+          since,
+          cfg.token,
+          notes,
+        )),
       );
     }
   }
@@ -552,22 +668,33 @@ export async function fetchSocial(range: DateRangeKey): Promise<SocialPayload> {
   const firstIg = profiles.find((p) => p.igUserId);
 
   const [ads, comments, hashtags, mentions, competitors] = await Promise.all([
-    fetchAds(since, until, notes),
+    fetchAds(profiles, since, until, notes),
     fetchComments(
       topPosts
         .filter((p) => p.network === "instagram")
         .slice(0, 8)
         .map((p) => ({ id: p.id, profile: p.profile, permalink: p.permalink })),
+      firstIg?.token ?? "",
       notes,
     ),
     firstIg && wantedTags.length
-      ? fetchHashtags(firstIg.igUserId as string, wantedTags, notes)
+      ? fetchHashtags(firstIg.igUserId as string, wantedTags, firstIg.token, notes)
       : Promise.resolve([] as HashtagRow[]),
     firstIg
-      ? fetchMentions(firstIg.igUserId as string, firstIg.label, notes)
+      ? fetchMentions(
+          firstIg.igUserId as string,
+          firstIg.label,
+          firstIg.token,
+          notes,
+        )
       : Promise.resolve([] as MentionRow[]),
     firstIg && wantedCompetitors.length
-      ? fetchCompetitors(firstIg.igUserId as string, wantedCompetitors, notes)
+      ? fetchCompetitors(
+          firstIg.igUserId as string,
+          wantedCompetitors,
+          firstIg.token,
+          notes,
+        )
       : Promise.resolve([] as CompetitorRow[]),
   ]);
 
