@@ -12,11 +12,13 @@ import {
 import { runHealthChecks } from "./health";
 import { fetchSignalOverview } from "./signals";
 import { KNOWN_SITES, PORTFOLIO_ORDER } from "./sites";
+import { classifySource, isSocial, type Platform } from "./sources";
 import {
   emptyBreakdown,
   type DateRangeKey,
   type HealthPayload,
   type PortfolioPayload,
+  type PlatformTotal,
   type PortfolioSite,
   type TrafficFilter,
 } from "./types";
@@ -43,6 +45,65 @@ function healthWithDeadline(ms: number): Promise<HealthPayload | null> {
  * Supabase call shared by all cards (totals + all-sites demand). Sites fail
  * independently — one property's GA error must not blank the other two cards.
  */
+/**
+ * Social traffic across the whole portfolio, summed per platform. Runs as its
+ * own set of reports rather than riding along with the site cards: if it
+ * fails, the home screen loses one panel instead of three cards. Sites that
+ * error contribute nothing rather than a zero, so a broken property cannot
+ * be read as "Instagram sent no one".
+ */
+async function fetchSocialTotals(
+  client: ReturnType<typeof getClient>,
+  current: { startDate: string; endDate: string },
+  geoFilter: ReturnType<typeof geoFilterFor>,
+): Promise<PlatformTotal[]> {
+  const totals = new Map<Platform, PlatformTotal>();
+  const perSite = await Promise.all(
+    PORTFOLIO_ORDER.map((propertyId) =>
+      client
+        .runReport({
+          property: propertyPath(propertyId),
+          dateRanges: [current],
+          dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
+          metrics: [
+            { name: "totalUsers" },
+            { name: "sessions" },
+            { name: "engagedSessions" },
+          ],
+          orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+          limit: 50,
+          ...geoFilter,
+        })
+        .then((res) => res[0].rows ?? [])
+        .catch(() => []),
+    ),
+  );
+
+  for (const rows of perSite) {
+    for (const row of rows) {
+      const platform = classifySource(
+        dimensionValue(row, 0),
+        dimensionValue(row, 1),
+      );
+      if (!isSocial(platform)) continue;
+      const entry = totals.get(platform) ?? {
+        platform,
+        users: 0,
+        sessions: 0,
+        engagedSessions: 0,
+      };
+      entry.users += metricNumber(row, 0);
+      entry.sessions += metricNumber(row, 1);
+      entry.engagedSessions += metricNumber(row, 2);
+      totals.set(platform, entry);
+    }
+  }
+
+  return [...totals.values()]
+    .filter((t) => t.sessions > 0)
+    .sort((a, b) => b.sessions - a.sessions);
+}
+
 export async function fetchPortfolio(
   range: DateRangeKey,
   filter: TrafficFilter,
@@ -146,10 +207,17 @@ export async function fetchPortfolio(
     return base;
   });
 
-  const [sites, signalsResult, health] = await Promise.all([
+  const socialPromise = client
+    ? fetchSocialTotals(client, current, geoFilter).catch(
+        () => [] as PlatformTotal[],
+      )
+    : Promise.resolve([] as PlatformTotal[]);
+
+  const [sites, signalsResult, health, social] = await Promise.all([
     Promise.all(sitePromises),
     signalsPromise,
     healthWithDeadline(3500),
+    socialPromise,
   ]);
 
   for (const site of sites) {
@@ -175,6 +243,7 @@ export async function fetchPortfolio(
     fetchedAt: new Date().toISOString(),
     sites,
     demand,
+    social,
     // The top model is deliberately not an insight — it already leads the
     // headline tiles and the demand board. "This period" carries changes,
     // anomalies, and health only.
