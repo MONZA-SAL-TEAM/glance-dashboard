@@ -12,6 +12,7 @@ import { SignalsPanel } from "@/components/signals-panel";
 import { SocialPanel } from "@/components/social-panel";
 import { SiteSwitcher } from "@/components/site-switcher";
 import { TrafficChart } from "@/components/traffic-chart";
+import { SocialTraffic, TrafficSources } from "@/components/traffic-sources";
 import { RANGE_KEYS, RANGE_SHORT, isRangeKey } from "@/lib/ranges";
 import { aliasToPropertyId, propertyIdToAlias } from "@/lib/sites";
 import {
@@ -707,6 +708,15 @@ export function Dashboard() {
             </div>
           ) : null}
 
+          {gatedPortfolio && gatedPortfolio.social.length > 0 ? (
+            <div className="mt-3 sm:mt-4">
+              <SocialTraffic
+                social={gatedPortfolio.social}
+                delayClass="animate-rise-delay-3"
+              />
+            </div>
+          ) : null}
+
           {gatedPortfolio ? (
             <div className="mt-3 sm:mt-4">
               <HealthDetails
@@ -844,6 +854,13 @@ export function Dashboard() {
           />
         </div>
       ) : null}
+
+      <div className="mt-3 sm:mt-4">
+        <TrafficSources
+          sources={overview?.sources ?? []}
+          delayClass="animate-rise-delay-2"
+        />
+      </div>
 
       <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 lg:grid-cols-2">
         <RankList

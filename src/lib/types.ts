@@ -1,3 +1,5 @@
+import type { Platform } from "./sources";
+
 export type DateRangeKey = "7d" | "28d" | "90d" | "180d" | "365d";
 
 /** "lb" shows Lebanon-only traffic (bot noise removed), "all" is raw GA4. */
@@ -66,6 +68,28 @@ export interface ChannelRow {
   channel: string;
   users: number;
   sessions: number;
+}
+
+/**
+ * One GA4 source/medium pair, tagged with the platform it belongs to. Kept at
+ * source granularity so a suspicious platform total can be traced back to the
+ * raw rows that produced it.
+ */
+export interface SourceRow {
+  source: string;
+  medium: string;
+  platform: Platform;
+  users: number;
+  sessions: number;
+  engagedSessions: number;
+}
+
+/** Source rows summed per platform. */
+export interface PlatformTotal {
+  platform: Platform;
+  users: number;
+  sessions: number;
+  engagedSessions: number;
 }
 
 export interface PageRow {
@@ -171,6 +195,8 @@ export interface PortfolioPayload {
   demand: DemandRow[];
   /** 3–5 deterministic, data-grounded observations for the home screen. */
   insights: string[];
+  /** Social traffic across all three sites, by platform. */
+  social: PlatformTotal[];
   /** Set when the signals source failed; cards then omit signal numbers. */
   signalsError?: string;
   healthError?: string;
@@ -193,6 +219,8 @@ export interface OverviewPayload {
   partialWindow: boolean;
   timeseries: TimeseriesPoint[];
   channels: ChannelRow[];
+  /** Traffic by GA4 source/medium, platform-tagged. */
+  sources: SourceRow[];
   landings: LandingRow[];
   pages: PageRow[];
   /** Countries in raw view, cities when the Lebanon filter is on. */

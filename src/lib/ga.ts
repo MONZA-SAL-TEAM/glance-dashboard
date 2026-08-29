@@ -3,8 +3,10 @@ import { format, subDays } from "date-fns";
 import { getGoogleCredentials } from "./google-credentials";
 import { getPropertyMeta, resolvePropertyId } from "./properties";
 import { rangeDays } from "./ranges";
+import { classifySource } from "./sources";
 import type {
   ChannelRow,
+  SourceRow,
   DateRangeKey,
   DeviceRow,
   GeoRow,
@@ -106,6 +108,7 @@ export async function fetchOverview(
     summaryRes,
     timeseriesRes,
     channelsRes,
+    sourcesRes,
     landingsRes,
     pagesRes,
     geoRes,
@@ -142,6 +145,22 @@ export async function fetchOverview(
       metrics: [{ name: "totalUsers" }, { name: "sessions" }],
       orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
       limit: 10,
+      ...geoFilter,
+    }),
+    // Source/medium rather than the channel group: GA4 buckets Instagram and
+    // Facebook together under "Organic Social", which is precisely the
+    // distinction we need. 50 rows is well past the long tail at this volume.
+    client.runReport({
+      property,
+      dateRanges: [current],
+      dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
+      metrics: [
+        { name: "totalUsers" },
+        { name: "sessions" },
+        { name: "engagedSessions" },
+      ],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      limit: 50,
       ...geoFilter,
     }),
     client.runReport({
@@ -249,6 +268,19 @@ export async function fetchOverview(
     sessions: metricNumber(row, 1),
   }));
 
+  const sources: SourceRow[] = (sourcesRes[0].rows ?? []).map((row) => {
+    const source = cleanLabel(dimensionValue(row, 0), "(direct)");
+    const medium = cleanLabel(dimensionValue(row, 1), "(none)");
+    return {
+      source,
+      medium,
+      platform: classifySource(source, medium),
+      users: metricNumber(row, 0),
+      sessions: metricNumber(row, 1),
+      engagedSessions: metricNumber(row, 2),
+    };
+  });
+
   const landings: LandingRow[] = (landingsRes[0].rows ?? [])
     .filter((row) => dimensionValue(row, 0).trim() !== "(not set)")
     .slice(0, 10)
@@ -287,6 +319,7 @@ export async function fetchOverview(
     partialWindow,
     timeseries: trimmed,
     channels,
+    sources,
     landings,
     pages,
     geo,
