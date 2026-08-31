@@ -1,4 +1,5 @@
 import { formatNumber } from "@/lib/format";
+import { WhatsAppChats } from "@/components/whatsapp-chats";
 import type { WhatsAppPayload } from "@/lib/whatsapp";
 import type { WhatsAppNumberHealth } from "@/lib/whatsapp-meta";
 
@@ -257,6 +258,10 @@ export function WhatsAppPanel({
 
   return (
     <>
+      <div className="mb-3 sm:mb-4">
+        <WhatsAppChats />
+      </div>
+
       <section className="panel animate-rise rounded-2xl p-4 sm:rounded-3xl sm:p-5 md:p-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
