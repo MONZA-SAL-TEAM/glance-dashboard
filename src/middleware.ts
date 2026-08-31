@@ -13,6 +13,9 @@ export async function middleware(request: NextRequest) {
     // dashboard cookie) — see src/lib/cron-auth.ts.
     pathname === "/api/health/run" ||
     pathname === "/api/digest/run" ||
+    // Meta's webhook cannot carry a login cookie; it authenticates itself
+    // (GET: verify token handshake, POST: X-Hub-Signature-256 HMAC).
+    pathname === "/api/whatsapp/webhook" ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico"
   ) {
