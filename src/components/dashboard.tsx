@@ -10,10 +10,13 @@ import { RankList } from "@/components/rank-list";
 import { RealtimePanel } from "@/components/realtime-panel";
 import { SignalsPanel } from "@/components/signals-panel";
 import { SocialPanel } from "@/components/social-panel";
+import { WhatsAppPanel } from "@/components/whatsapp-panel";
 import { SiteSwitcher } from "@/components/site-switcher";
 import { TrafficChart } from "@/components/traffic-chart";
 import { SocialTraffic, TrafficSources } from "@/components/traffic-sources";
 import { RANGE_KEYS, RANGE_SHORT, isRangeKey } from "@/lib/ranges";
+import type { WhatsAppPayload } from "@/lib/whatsapp";
+import type { WhatsAppNumberHealth } from "@/lib/whatsapp-meta";
 import { aliasToPropertyId, propertyIdToAlias } from "@/lib/sites";
 import {
   formatDelta,
@@ -47,6 +50,8 @@ const MONZA_PROPERTY_ID = "547222815";
 
 /** Sentinel "site" for the Instagram + Facebook view. */
 const SOCIAL_VIEW = "social";
+/** WhatsApp intent view — first-party demand analytics, read-only. */
+const WHATSAPP_VIEW = "whatsapp";
 
 /** Brand sites that publish per-model pages (Monza's are brand hubs). */
 const MODEL_PROPERTY_IDS = ["541962515", "540543412"];
@@ -66,6 +71,11 @@ export function Dashboard() {
   const [social, setSocial] = useState<SocialPayload | null>(null);
   const [socialError, setSocialError] = useState<string | null>(null);
   const [loadingSocial, setLoadingSocial] = useState(true);
+  const [whatsapp, setWhatsapp] = useState<
+    (WhatsAppPayload & { numberHealth: WhatsAppNumberHealth }) | null
+  >(null);
+  const [whatsappError, setWhatsappError] = useState<string | null>(null);
+  const [loadingWhatsapp, setLoadingWhatsapp] = useState(true);
   const [modelPages, setModelPages] = useState<ModelPagesPayload | null>(null);
   const [modelPagesError, setModelPagesError] = useState<string | null>(null);
   const [loadingModelPages, setLoadingModelPages] = useState(true);
@@ -95,6 +105,7 @@ export function Dashboard() {
   const deadUrlsSeq = useRef(0);
   const modelPagesSeq = useRef(0);
   const socialSeq = useRef(0);
+  const whatsappSeq = useRef(0);
 
   // Adopt shareable URL state (?site=voyah&range=28d&filter=lb), falling back
   // to the per-browser stored filter. Runs once; fetch effects wait on `ready`.
@@ -105,8 +116,8 @@ export function Dashboard() {
       const rangeParam = params.get("range");
       const filterParam = params.get("filter");
 
-      if (siteParam === SOCIAL_VIEW) {
-        setPropertyId(SOCIAL_VIEW);
+      if (siteParam === SOCIAL_VIEW || siteParam === WHATSAPP_VIEW) {
+        setPropertyId(siteParam);
       } else if (siteParam && siteParam !== ALL_SITES) {
         setPropertyId(aliasToPropertyId(siteParam) ?? siteParam);
       } else {
@@ -139,7 +150,9 @@ export function Dashboard() {
     if (!ready || !propertyId) return;
     try {
       const site =
-        propertyId === ALL_SITES || propertyId === SOCIAL_VIEW
+        propertyId === ALL_SITES ||
+        propertyId === SOCIAL_VIEW ||
+        propertyId === WHATSAPP_VIEW
           ? propertyId
           : propertyIdToAlias(propertyId);
       window.history.replaceState(
@@ -384,12 +397,41 @@ export function Dashboard() {
     }
   }, []);
 
+  const loadWhatsapp = useCallback(async (nextRange: DateRangeKey) => {
+    const seq = ++whatsappSeq.current;
+    setLoadingWhatsapp(true);
+    try {
+      const res = await fetch(`/api/whatsapp?range=${nextRange}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `WhatsApp stats failed (${res.status})`);
+      }
+      const data = (await res.json()) as WhatsAppPayload & {
+        numberHealth: WhatsAppNumberHealth;
+      };
+      if (seq !== whatsappSeq.current) return;
+      setWhatsapp(data);
+      setWhatsappError(null);
+    } catch (err) {
+      if (seq !== whatsappSeq.current) return;
+      setWhatsapp(null);
+      setWhatsappError(
+        err instanceof Error ? err.message : "WhatsApp stats unavailable",
+      );
+    } finally {
+      if (seq === whatsappSeq.current) setLoadingWhatsapp(false);
+    }
+  }, []);
+
   const isSocial = propertyId === SOCIAL_VIEW;
+  const isWhatsapp = propertyId === WHATSAPP_VIEW;
   const isPortfolio = propertyId === ALL_SITES;
   const isModelSite = MODEL_PROPERTY_IDS.includes(propertyId);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW) return;
+    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW || propertyId === WHATSAPP_VIEW) return;
     startTransition(() => {
       void loadOverview(range, propertyId, filter);
     });
@@ -401,12 +443,17 @@ export function Dashboard() {
   }, [ready, propertyId, range, loadSocial]);
 
   useEffect(() => {
+    if (!ready || propertyId !== WHATSAPP_VIEW) return;
+    void loadWhatsapp(range);
+  }, [ready, propertyId, range, loadWhatsapp]);
+
+  useEffect(() => {
     if (!ready || propertyId !== MONZA_PROPERTY_ID) return;
     void loadDeadUrls(range);
   }, [ready, range, propertyId, loadDeadUrls]);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW) return;
+    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW || propertyId === WHATSAPP_VIEW) return;
     void loadSignals(range, propertyId);
   }, [ready, range, propertyId, loadSignals]);
 
@@ -426,7 +473,7 @@ export function Dashboard() {
   }, [ready, propertyId, range, filter, loadModelPages]);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW) return;
+    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW || propertyId === WHATSAPP_VIEW) return;
 
     let cancelled = false;
     const tick = () => {
@@ -450,8 +497,11 @@ export function Dashboard() {
     { id: ALL_SITES, name: "All sites", url: "portfolio" },
     ...sites,
     { id: SOCIAL_VIEW, name: "Social", url: "Instagram & Facebook" },
+    { id: WHATSAPP_VIEW, name: "WhatsApp", url: "intent & demand" },
   ];
-  const activeSite = isSocial
+  const activeSite = isWhatsapp
+    ? { id: WHATSAPP_VIEW, name: "WhatsApp" }
+    : isSocial
     ? { id: SOCIAL_VIEW, name: "Social" }
     : isPortfolio
     ? { id: ALL_SITES, name: "All sites" }
@@ -612,7 +662,26 @@ export function Dashboard() {
         </div>
       ) : null}
 
-      {isSocial ? (
+      {isWhatsapp ? (
+        loadingWhatsapp && !whatsapp ? (
+          <section className="panel animate-rise rounded-2xl p-4 sm:rounded-3xl sm:p-6">
+            <p className="text-sm text-ink-soft">Reading WhatsApp demand…</p>
+          </section>
+        ) : whatsappError ? (
+          <section className="panel animate-rise rounded-2xl p-4 sm:rounded-3xl sm:p-6">
+            <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold text-ink">
+              WhatsApp
+            </h2>
+            <p className="mt-2 text-sm text-ink-soft">{whatsappError}</p>
+          </section>
+        ) : whatsapp && whatsapp.range === range ? (
+          <WhatsAppPanel data={whatsapp} numberHealth={whatsapp.numberHealth} />
+        ) : (
+          <section className="panel animate-rise rounded-2xl p-4 sm:rounded-3xl sm:p-6">
+            <p className="text-sm text-ink-soft">Reading WhatsApp demand…</p>
+          </section>
+        )
+      ) : isSocial ? (
         <SocialPanel
           data={social && social.range === range ? social : null}
           loading={loadingSocial}
