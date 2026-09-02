@@ -98,6 +98,24 @@ check("exact beats collapsed across models", matchModel("voyah free").status ===
 check("no model mentioned -> undefined", modelFromCaption("Happy Eid from Monza SAL") === undefined);
 check("empty caption -> undefined", modelFromCaption(undefined) === undefined);
 
+console.log("whole-name matching (a longer real name is not a shorter one):");
+// Found in production on 2026-09-02: the account posted "Introducing the brand
+// new Voyah Passion S" and it was stored as "VOYAH Passion", status
+// "recognized" — confidently wrong, and indistinguishable from a real Passion
+// mention afterwards. The vocabulary was missing the model, and a plain
+// substring test happily read the shorter name out of the longer one.
+check("Passion S is its own model", modelFromCaption("Introducing the brand new Voyah Passion S") === "VOYAH Passion S");
+check("#voyahpassions maps to Passion S", modelFromCaption("out now #voyahpassions") === "VOYAH Passion S");
+// The same flaw, latent, for the model that already existed: without a
+// boundary "VOYAH Passion Luxury" contains "VOYAH Passion L".
+check("Passion Luxury is not Passion L", modelFromCaption("The VOYAH Passion Luxury edition") === "VOYAH Passion");
+check("Passion Sedan is not Passion S", modelFromCaption("The VOYAH Passion Sedan arrives") === "VOYAH Passion");
+check("Passion L still matches when actually named", modelFromCaption("The VOYAH Passion L in Black") === "VOYAH Passion L");
+check("Passion S still matches when actually named", modelFromCaption("The VOYAH Passion S in Black") === "VOYAH Passion S");
+check("plain Passion unaffected", modelFromCaption("Introducing the VOYAH Passion") === "VOYAH Passion");
+check("Free+ survives regex escaping of the plus", modelFromCaption("The VOYAH Free+ arrives") === "VOYAH Free+");
+check("a word merely starting with a model name does not match", matchModel("VOYAH Freedom tour").model !== "VOYAH Free");
+
 console.log("raw + canonical + status (audit trail, not just the answer):");
 const exact = matchModel("The all-new VOYAH Passion L in Black");
 check("exact mention -> recognized", exact.status === "recognized");

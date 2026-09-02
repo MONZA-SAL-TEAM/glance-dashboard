@@ -178,24 +178,52 @@ function collapse(value: string): string {
   return value.toLowerCase().replace(/\+/g, "plus").replace(/[^a-z0-9]/g, "");
 }
 
+/**
+ * Whole-name test. `includes` lets a LONGER real name be read as a shorter
+ * one from the vocabulary: "VOYAH Passion Sedan" contains "VOYAH Passion S"
+ * and "VOYAH Passion Luxury" contains "VOYAH Passion L". Either would be
+ * tagged as the wrong model with status "recognized" — confidently wrong,
+ * and indistinguishable afterwards from a genuine mention.
+ *
+ * Requiring a non-alphanumeric boundary on both sides stops a name from
+ * matching a word that merely begins with it. "+" is escaped because
+ * "VOYAH Free+" would otherwise be a quantifier.
+ */
+function mentions(haystack: string, model: string): boolean {
+  const escaped = model.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).test(haystack);
+}
+
 export function matchModel(caption: string | undefined): ModelMatch {
   if (!caption) return { status: "none" };
   const spaced = caption.toLowerCase().replace(/[#_]/g, " ").replace(/\s+/g, " ");
-  const squashed = collapse(caption);
+  // Collapsed matching is done per TOKEN, never against the whole caption run
+  // together: "#voyah #freedomtoexplore" — a real pairing on this account —
+  // squashes to "voyahfreedomtoexplore", which contains "voyahfree". Matching
+  // the caption as one string reads the brand tagline as a model.
+  const tokens = caption.split(/[\s#_]+/).map(collapse).filter(Boolean);
   const ordered = [...CANONICAL_MODELS].sort((a, b) => b.length - a.length);
 
   // Two passes, not one interleaved loop. An exact mention anywhere must beat
   // a collapsed match on a different model: with a single pass, "VOYAH Free+"
   // got its hashtag attempt before "VOYAH Free" got its exact one.
   for (const model of ordered) {
-    if (spaced.includes(model.toLowerCase())) {
+    if (mentions(spaced, model)) {
       return { model, raw: model, status: "recognized" };
     }
   }
 
   for (const model of ordered) {
     const collapsed = collapse(model);
-    if (collapsed && squashed.includes(collapsed)) {
+    if (!collapsed) continue;
+    // A token may carry a trim suffix — "#voyahfree318" is a Free. So a
+    // trailing DIGIT still counts as the same car, while a trailing letter
+    // makes it a different word: "voyahfreedom" is not a Free, and
+    // "voyahpassions" is a Passion S rather than a Passion.
+    const hit = tokens.find(
+      (t) => t.startsWith(collapsed) && !/^[a-z]/.test(t.slice(collapsed.length)),
+    );
+    if (hit) {
       // Recover the fragment as written, so the audit trail shows what the
       // caption actually said rather than the value we mapped it to.
       const re = new RegExp(`#?${collapsed.split("").join("[^a-z0-9]?")}`, "i");
