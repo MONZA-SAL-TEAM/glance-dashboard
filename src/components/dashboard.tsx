@@ -20,7 +20,11 @@ import { SocialTraffic, TrafficSources } from "@/components/traffic-sources";
 import { RANGE_KEYS, RANGE_SHORT, isRangeKey } from "@/lib/ranges";
 import type { WhatsAppPayload } from "@/lib/whatsapp";
 import type { WhatsAppNumberHealth } from "@/lib/whatsapp-meta";
-import { aliasToPropertyId, propertyIdToAlias } from "@/lib/sites";
+import {
+  aliasToPropertyId,
+  instagramSignalsForBrand,
+  propertyIdToAlias,
+} from "@/lib/sites";
 import {
   formatDelta,
   formatDuration,
@@ -793,9 +797,9 @@ export function Dashboard() {
           error={socialError}
           instagramSignals={
             gatedPortfolio && !gatedPortfolio.signalsError
-              ? gatedPortfolio.sites.reduce(
-                  (a, s) => a + s.byType.instagram_click,
-                  0,
+              ? instagramSignalsForBrand(
+                  gatedPortfolio.sites,
+                  brandOfSocialView(propertyId),
                 )
               : undefined
           }

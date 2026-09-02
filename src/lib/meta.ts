@@ -19,6 +19,7 @@ import type {
   SocialAudienceRow,
   SocialPayload,
   SocialPost,
+  SocialMetric,
   SocialProfile,
   SocialSeriesPoint,
 } from "./types";
@@ -566,12 +567,21 @@ async function facebookProfile(
   if (reachEntry) byName.set("reach", reachEntry);
   if (engagedEntry) byName.set("engaged", engagedEntry);
 
+  // Every candidate for a metric failing is not the same as the metric being
+  // zero. Meta retired the page_impressions family, so these calls come back
+  // (#100) "must be a valid insights metric" and the totals below would read 0 —
+  // a confident claim that nobody was reached.
+  const unavailable: SocialMetric[] = [];
+  if (!byName.has("reach")) unavailable.push("reach");
+  if (!byName.has("engaged")) unavailable.push("engaged");
+
   return {
     label: cfg.label,
     network: "facebook",
     handle: page?.name,
     followers: page?.followers_count ?? page?.fan_count ?? 0,
     posts: 0,
+    unavailable: unavailable.length ? unavailable : undefined,
     reach: metricTotal(byName.get("reach")),
     views: 0,
     profileViews: 0,
