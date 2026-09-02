@@ -23,7 +23,17 @@ export async function POST(request: NextRequest) {
       {
         ok: payload.ok,
         brands: payload.brands,
-        stored,
+        // The ingest RPC counts ROWS, but two of its names read like counts of
+        // things: "profiles" is profile-DAY rows, so two profiles backfilled a
+        // month deep report 33; "audience" is one row per demographic bucket
+        // (city, country, age band, gender), not people. Both were read as
+        // entity counts on the first real run, so the report names them.
+        stored: {
+          posts: stored.posts,
+          stories: stored.stories,
+          profileDays: stored.profiles,
+          audienceRows: stored.audience,
+        },
         daysBackfilled: payload.days_backfilled,
         notes: payload.notes,
       },

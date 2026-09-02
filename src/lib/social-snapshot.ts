@@ -530,6 +530,15 @@ async function instagramSnapshot(
         value: Number(value) || 0,
       });
     }
+  } else if (online) {
+    // The call SUCCEEDED and carried nothing usable. Without this note that
+    // is invisible: attempt() only records failures, so a metric answering
+    // with an empty body writes no rows, raises no error, and looks exactly
+    // like a metric nobody asked for. `online_followers` has been returning
+    // empty here, so "when followers are online" has silently never worked.
+    out.notes.push(
+      `${cfg.label} · IG online followers — returned no hourly data`,
+    );
   }
 }
 
