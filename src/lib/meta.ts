@@ -438,24 +438,42 @@ function pageToken(
  * the whole request with (#100) "must be a valid insights metric" — which is
  * how reach and engagement both read zero because of one bad third metric.
  * One request per metric, so a retirement costs that number alone.
+ *
+ * Each measure is a list of names newest-first, tried until one answers:
+ * `page_impressions_unique` was itself retired after this code first shipped,
+ * and a lone metric name means the next retirement silently becomes a zero.
+ * Only a measure whose every candidate failed is worth reporting, and the
+ * note then names them all rather than just the last one tried.
  */
 async function facebookMetric(
   pageId: string,
-  metric: string,
+  candidates: string[],
   label: string,
   since: string,
   until: string,
   token: string | null,
   notes: string[],
 ): Promise<InsightEntry | undefined> {
-  const res = await attempt(`${label} · FB ${metric}`, notes, () =>
-    graph<{ data: InsightEntry[] }>(
-      `${pageId}/insights`,
-      { metric, period: "day", since, until },
-      token ?? undefined,
-    ),
+  const quiet: string[] = [];
+  for (const metric of candidates) {
+    const res = await attempt(`${label} · FB ${metric}`, quiet, () =>
+      graph<{ data: InsightEntry[] }>(
+        `${pageId}/insights`,
+        { metric, period: "day", since, until },
+        token ?? undefined,
+      ),
+    );
+    const entry = res?.data?.[0];
+    if (entry) return entry;
+  }
+  // Every candidate failed: report the measure once, not each attempt.
+  notes.push(
+    `${label} · FB ${candidates.join(" / ")} — ${
+      quiet[quiet.length - 1]?.split(" — ").slice(1).join(" — ") ||
+      "no metric in this group is currently valid"
+    }`,
   );
-  return res?.data?.[0];
+  return undefined;
 }
 
 async function facebookProfile(
@@ -476,14 +494,31 @@ async function facebookProfile(
 
   const token = await pageToken(id, cfg.label, cfg.token, notes);
   const [reachEntry, engagedEntry] = await Promise.all([
-    facebookMetric(id, "page_impressions_unique", cfg.label, since, until, token, notes),
-    facebookMetric(id, "page_post_engagements", cfg.label, since, until, token, notes),
+    facebookMetric(
+      id,
+      ["page_impressions_unique", "page_impressions", "page_reach"],
+      cfg.label,
+      since,
+      until,
+      token,
+      notes,
+    ),
+    facebookMetric(
+      id,
+      ["page_post_engagements", "page_total_actions"],
+      cfg.label,
+      since,
+      until,
+      token,
+      notes,
+    ),
   ]);
-  const byName = new Map(
-    [reachEntry, engagedEntry]
-      .filter((e): e is InsightEntry => Boolean(e))
-      .map((e) => [e.name, e]),
-  );
+  // Keyed by role rather than by Meta's metric name: which candidate answered
+  // is an implementation detail, and keying on the name would break the
+  // moment a fallback is the one that succeeds.
+  const byName = new Map<string, InsightEntry>();
+  if (reachEntry) byName.set("reach", reachEntry);
+  if (engagedEntry) byName.set("engaged", engagedEntry);
 
   return {
     label: cfg.label,
@@ -491,15 +526,12 @@ async function facebookProfile(
     handle: page?.name,
     followers: page?.followers_count ?? page?.fan_count ?? 0,
     posts: 0,
-    reach: metricTotal(byName.get("page_impressions_unique")),
+    reach: metricTotal(byName.get("reach")),
     views: 0,
     profileViews: 0,
     websiteClicks: 0,
-    engaged: metricTotal(byName.get("page_post_engagements")),
-    series: mergeSeries(
-      seriesOf(byName.get("page_impressions_unique")),
-      new Map(),
-    ),
+    engaged: metricTotal(byName.get("engaged")),
+    series: mergeSeries(seriesOf(byName.get("reach")), new Map()),
   };
 }
 
