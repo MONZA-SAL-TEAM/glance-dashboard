@@ -11,7 +11,10 @@ import { RealtimePanel } from "@/components/realtime-panel";
 import { SignalsPanel } from "@/components/signals-panel";
 import { SocialPanel } from "@/components/social-panel";
 import { WhatsAppPanel } from "@/components/whatsapp-panel";
-import { SiteSwitcher } from "@/components/site-switcher";
+import {
+  SiteSwitcher,
+  type SwitcherGroup,
+} from "@/components/site-switcher";
 import { TrafficChart } from "@/components/traffic-chart";
 import { SocialTraffic, TrafficSources } from "@/components/traffic-sources";
 import { RANGE_KEYS, RANGE_SHORT, isRangeKey } from "@/lib/ranges";
@@ -543,20 +546,58 @@ export function Dashboard() {
 
   const metrics = overview?.overview;
   const previous = overview?.previous ?? null;
-  const switcherSites: SiteProperty[] = [
-    { id: ALL_SITES, name: "All sites", url: "portfolio" },
-    ...sites,
-    // Alphabetical, so the Social entries mirror the site list above them
-    // rather than inheriting META_PROFILES' arbitrary order.
-    ...[...socialViews]
-      .sort((a, b) => a.label.localeCompare(b.label))
-      .map((v) => ({
+  // Grouped by brand: each brand's website sits next to its Social view, so
+  // a brand whose Meta assets aren't linked yet shows as a visible gap under
+  // its own heading instead of silently missing from a flat list. Views that
+  // span every brand (the portfolio, WhatsApp — one number, all three sites)
+  // get their own groups at the ends.
+  const switcherGroups: SwitcherGroup[] = (() => {
+    const brands = new Map<
+      string,
+      { label: string; site?: SiteProperty; social?: SiteProperty }
+    >();
+
+    for (const site of sites) {
+      const brand = propertyIdToAlias(site.id);
+      const entry = brands.get(brand) ?? {
+        // "MHERO Lebanon" -> "MHERO"; "Monza SAL" stays as it is.
+        label: site.name.replace(/\s+Lebanon$/i, ""),
+      };
+      entry.site = site;
+      brands.set(brand, entry);
+    }
+
+    for (const v of socialViews) {
+      const entry = brands.get(v.brand) ?? { label: v.label };
+      entry.social = {
         id: socialViewId(v.brand),
         name: `${v.label} Social`,
         url: "Instagram & Facebook",
-      })),
-    { id: WHATSAPP_VIEW, name: "WhatsApp", url: "intent & demand" },
-  ];
+      };
+      brands.set(v.brand, entry);
+    }
+
+    const brandGroups = [...brands.values()]
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((b) => ({
+        label: b.label,
+        sites: [b.site, b.social].filter((x): x is SiteProperty => Boolean(x)),
+      }));
+
+    return [
+      {
+        label: "Portfolio",
+        sites: [{ id: ALL_SITES, name: "All sites", url: "portfolio" }],
+      },
+      ...brandGroups,
+      {
+        label: "All brands",
+        sites: [
+          { id: WHATSAPP_VIEW, name: "WhatsApp", url: "intent & demand" },
+        ],
+      },
+    ];
+  })();
   const activeSite = isWhatsapp
     ? { id: WHATSAPP_VIEW, name: "WhatsApp" }
     : isSocial
@@ -625,7 +666,7 @@ export function Dashboard() {
         <div className="flex w-full flex-col gap-3 sm:w-auto sm:items-end">
           <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
             <SiteSwitcher
-              sites={switcherSites}
+              groups={switcherGroups}
               value={propertyId}
               onChange={(id) => {
                 setOverview(null);
