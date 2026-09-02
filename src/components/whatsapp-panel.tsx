@@ -362,6 +362,22 @@ export function WhatsAppPanel({
               </p>
             </div>
           ) : null}
+          {data.unrecognised.length > 0 ? (
+            <div className="mt-3 rounded-xl bg-sand/60 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-soft">
+                Unrecognised labels
+              </p>
+              <p className="mt-1 text-sm text-ink">
+                {data.unrecognised
+                  .map((b) => `${b.label} ${b.total}`)
+                  .join(" · ")}
+              </p>
+              <p className="mt-1 text-[11px] leading-snug text-ink-soft/80">
+                Matching no known model or brand — a new spelling has appeared
+                in the sites&apos; free text. Counted, not ranked.
+              </p>
+            </div>
+          ) : null}
         </section>
 
         <section className="panel animate-rise rounded-2xl p-4 sm:rounded-3xl sm:p-5 md:p-6">
