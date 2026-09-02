@@ -1,4 +1,5 @@
 import {
+  matchModel,
   modelFromCaption,
   profileKey,
   reconstructFollowerLevels,
@@ -86,8 +87,43 @@ check(
 );
 check("case insensitive", modelFromCaption("the voyah free is here") === "VOYAH Free");
 check("MHERO models", modelFromCaption("MHERO 1 conquering the dunes") === "MHERO 1");
+// Free vs Free+ : collapsing "+" away makes these identical, and Free+ is the
+// longer name, so every Free mention would silently become Free+.
+check("plain Free is not relabelled as Free+", modelFromCaption("the voyah free is here") === "VOYAH Free");
+check("Free+ still resolves when actually named", modelFromCaption("The VOYAH Free+ arrives") === "VOYAH Free+");
+check("#voyahfree stays Free", modelFromCaption("out now #voyahfree") === "VOYAH Free");
+check("#voyahfreeplus is Free+", modelFromCaption("out now #voyahfreeplus") === "VOYAH Free+");
+// An exact mention must beat a collapsed match on a different model.
+check("exact beats collapsed across models", matchModel("voyah free").status === "recognized");
 check("no model mentioned -> undefined", modelFromCaption("Happy Eid from Monza SAL") === undefined);
 check("empty caption -> undefined", modelFromCaption(undefined) === undefined);
+
+console.log("raw + canonical + status (audit trail, not just the answer):");
+const exact = matchModel("The all-new VOYAH Passion L in Black");
+check("exact mention -> recognized", exact.status === "recognized");
+check("canonical value", exact.model === "VOYAH Passion L");
+check("raw recorded", exact.raw === "VOYAH Passion L");
+
+const tagged = matchModel("Stunning in Sage Green. #voyahpassionl #monzasal");
+check("hashtag -> normalized, not recognized", tagged.status === "normalized");
+check("still maps to the canonical value", tagged.model === "VOYAH Passion L");
+check(
+  "raw preserves what the caption ACTUALLY said",
+  tagged.raw?.toLowerCase().includes("voyahpassionl") === true,
+);
+
+const nothing = matchModel("Happy Eid from all of us at Monza SAL");
+check("no model -> status none", nothing.status === "none");
+check("no canonical invented", nothing.model === undefined);
+check("no raw invented", nothing.raw === undefined);
+check("empty caption -> none", matchModel(undefined).status === "none");
+
+// The audit-trail property that makes a later matcher fix appliable:
+// from the stored raw alone you can tell WHY a row got its canonical value.
+check(
+  "recognized and normalized are distinguishable after the fact",
+  exact.status !== tagged.status && exact.model === tagged.model,
+);
 
 console.log("profile keys are stable identifiers:");
 check("brand:network shape", profileKey("voyah", "instagram") === "voyah:instagram");
