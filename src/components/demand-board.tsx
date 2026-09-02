@@ -1,5 +1,5 @@
 import { formatNumber } from "@/lib/format";
-import { isCanonicalModel } from "@/lib/sites";
+import { classifyVehicle, isCanonicalModel } from "@/lib/sites";
 import type { DemandRow } from "@/lib/types";
 
 interface DemandBoardProps {
@@ -20,12 +20,13 @@ export function DemandBoard({ demand, delayClass = "" }: DemandBoardProps) {
     .filter((d) => d.total > 0 && isCanonicalModel(d.vehicle))
     .sort((a, b) => b.total - a.total);
   const brandLevel = demand
-    .filter(
-      (d) =>
-        d.total > 0 &&
-        !isCanonicalModel(d.vehicle) &&
-        d.vehicle !== "unspecified",
-    )
+    .filter((d) => d.total > 0 && classifyVehicle(d.vehicle) === "brand")
+    .sort((a, b) => b.total - a.total);
+  // Labels matching neither a model nor one of the three brands. Shown
+  // separately so a drifting spelling is visible as a data problem instead
+  // of quietly appearing as a fourth brand.
+  const unrecognised = demand
+    .filter((d) => d.total > 0 && classifyVehicle(d.vehicle) === "unrecognised")
     .sort((a, b) => b.total - a.total);
 
   const max = Math.max(...models.map((r) => r.total), 1);
@@ -88,6 +89,29 @@ export function DemandBoard({ demand, delayClass = "" }: DemandBoardProps) {
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+
+      {unrecognised.length > 0 ? (
+        <div className="mt-3 rounded-xl bg-sand/60 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-soft">
+            Unrecognised labels
+          </p>
+          <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-soft">
+            {unrecognised.map((row) => (
+              <li key={row.vehicle}>
+                {row.vehicle}{" "}
+                <span className="tabular-nums text-ink">
+                  {formatNumber(row.total)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-[11px] leading-snug text-ink-soft/80">
+            These match no known model or brand — the sites write free text
+            and a new spelling has appeared. They are counted but not ranked;
+            add the spelling to the database normalizer to fold them in.
+          </p>
         </div>
       ) : null}
 

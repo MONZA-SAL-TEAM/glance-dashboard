@@ -36,6 +36,34 @@ check("MHERO 1 ranked", p.byModel.some((m) => m.label === "MHERO 1" && m.total =
 check("brand-level VOYAH separated, not ranked as model", p.brandLevel.some((b) => b.label === "VOYAH") && !p.byModel.some((m) => m.label === "VOYAH"));
 check("unspecified excluded from brand-level", !p.brandLevel.some((b) => b.label === "unspecified"));
 
+console.log("brand vocabulary — exactly three brands, drift surfaced:");
+const vocab = buildWhatsAppPayload(
+  [
+    row("2026-08-28", 10, "monzasal.com", "index.html", "Monza SAL", 5),
+    row("2026-08-28", 11, "voyahlebanon.com", "voyahlebanon.com/", "VOYAH", 3),
+    row("2026-08-28", 12, "mherolebanon.com", "mherolebanon.com/", "MHERO", 2),
+    // A spelling the database normalizer does not yet know — exactly how
+    // "Monza" appeared on 2026-09-02 and rendered as a fourth brand.
+    row("2026-08-28", 13, "monzasal.com", "index.html", "Monza Group", 4),
+  ] as never,
+  "7d",
+  now,
+);
+check("exactly three brands", vocab.brandLevel.length === 3);
+check(
+  "the three are VOYAH / MHERO / Monza SAL",
+  ["VOYAH", "MHERO", "Monza SAL"].every((b) =>
+    vocab.brandLevel.some((x) => x.label === b),
+  ),
+);
+check("a drifting spelling is NOT counted as a brand",
+  !vocab.brandLevel.some((x) => x.label === "Monza Group"));
+check("it surfaces as unrecognised instead",
+  vocab.unrecognised.length === 1 && vocab.unrecognised[0].label === "Monza Group");
+check("unrecognised is still counted, not dropped", vocab.unrecognised[0].total === 4);
+check("brands never leak into the model ranking",
+  !vocab.byModel.some((m) => ["VOYAH", "MHERO", "Monza SAL", "Monza Group"].includes(m.label)));
+
 console.log("time distributions (current window only):");
 check("hour 18 = 4 clicks", p.byHour[18] === 4);
 check("hour 9 = 2 clicks", p.byHour[9] === 2);

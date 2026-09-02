@@ -52,6 +52,38 @@ export function isCanonicalModel(vehicle: string): boolean {
   return MODEL_SET.has(vehicle);
 }
 
+/**
+ * The three brands, and only three. A signal carrying no specific model
+ * still names one of these.
+ *
+ * The database normalizes raw vehicle_context into this vocabulary
+ * (public.glance_normalize_vehicle), but the sites write free text and the
+ * spellings drift — "Monza" first appeared on 2026-09-02 alongside the older
+ * "the Monza lineup", and briefly rendered as a fourth brand. Anything that
+ * matches neither a model nor a brand is UNRECOGNISED and must be shown as
+ * such rather than silently promoted to a brand, which is how that bug hid.
+ */
+export const CANONICAL_BRANDS = ["VOYAH", "MHERO", "Monza SAL"] as const;
+
+const BRAND_SET: ReadonlySet<string> = new Set(CANONICAL_BRANDS);
+
+export function isCanonicalBrand(vehicle: string): boolean {
+  return BRAND_SET.has(vehicle);
+}
+
+/**
+ * Classify a normalized vehicle label. "unrecognised" means the database
+ * normalizer needs a new spelling adding — a prompt, not a category.
+ */
+export function classifyVehicle(
+  vehicle: string,
+): "model" | "brand" | "unspecified" | "unrecognised" {
+  if (MODEL_SET.has(vehicle)) return "model";
+  if (BRAND_SET.has(vehicle)) return "brand";
+  if (vehicle === "unspecified") return "unspecified";
+  return "unrecognised";
+}
+
 export function aliasToPropertyId(alias: string): string | null {
   const entry = Object.entries(KNOWN_SITES).find(
     ([, site]) => site.alias === alias.toLowerCase(),
