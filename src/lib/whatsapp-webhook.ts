@@ -38,6 +38,19 @@ export interface WaEvent {
   body?: string;
   ts?: number;
   status?: string;
+  /**
+   * Click-to-WhatsApp attribution. Meta attaches `referral` to the FIRST
+   * message of any conversation started from an ad, and never again — so a
+   * webhook that ignores it destroys the only paid-attribution key that
+   * conversation will ever have. This is the Cloud API half of the audit's
+   * F1; organic clicks from Monza's own sites still need the prefill token.
+   */
+  ctwa_clid?: string;
+  referral_source_id?: string;
+  referral_source_type?: string;
+  referral_headline?: string;
+  /** WAMID this message replies to, from the webhook `context` object. */
+  reply_to_id?: string;
 }
 
 /** Constant-time check of Meta's X-Hub-Signature-256 header. */
@@ -81,6 +94,25 @@ interface MetaMessage {
     button_reply?: { title?: string };
     list_reply?: { title?: string };
   };
+  reaction?: { emoji?: string; message_id?: string };
+  contacts?: Array<{ name?: { formatted_name?: string } }>;
+  order?: { product_items?: unknown[] };
+  system?: { body?: string; type?: string };
+  /** Present only via the "Message business" button or a catalog product. */
+  context?: {
+    id?: string;
+    referred_product?: { catalog_id?: string; product_retailer_id?: string };
+  };
+  /** Present only when the conversation began from a Click-to-WhatsApp ad. */
+  referral?: {
+    source_url?: string;
+    source_id?: string;
+    source_type?: string;
+    headline?: string;
+    body?: string;
+    media_type?: string;
+    ctwa_clid?: string;
+  };
 }
 
 /** A readable one-line body for any message type Meta can deliver. */
@@ -108,6 +140,25 @@ export function messageBody(msg: MetaMessage): string {
         msg.interactive?.list_reply?.title ??
         "interactive reply"
       );
+    case "reaction":
+      return msg.reaction?.emoji
+        ? `reacted ${msg.reaction.emoji}`
+        : "reaction";
+    case "contacts": {
+      const names = (msg.contacts ?? [])
+        .map((c) => c?.name?.formatted_name)
+        .filter(Boolean);
+      return names.length ? `👤 ${names.join(", ")}` : "👤 shared a contact";
+    }
+    case "order": {
+      const n = msg.order?.product_items?.length ?? 0;
+      return n ? `🛒 order · ${n} item${n === 1 ? "" : "s"}` : "🛒 order";
+    }
+    case "system":
+      // e.g. user_changed_number — identity-relevant, not chatter.
+      return msg.system?.body ?? "system update";
+    case "unsupported":
+      return "unsupported message type";
     default:
       return msg.type ? `[${msg.type}]` : "";
   }
@@ -189,6 +240,13 @@ export function normalizeWebhook(payload: unknown): WaEvent[] {
           type: msg.type ?? "text",
           body: messageBody(msg),
           ts: Number(msg.timestamp) || undefined,
+          // Ad attribution — first message of an ad-originated conversation
+          // only. Unrecoverable if dropped here.
+          ctwa_clid: msg.referral?.ctwa_clid,
+          referral_source_id: msg.referral?.source_id,
+          referral_source_type: msg.referral?.source_type,
+          referral_headline: msg.referral?.headline,
+          reply_to_id: msg.context?.id,
         });
       }
 
