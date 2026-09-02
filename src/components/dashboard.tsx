@@ -546,11 +546,15 @@ export function Dashboard() {
   const switcherSites: SiteProperty[] = [
     { id: ALL_SITES, name: "All sites", url: "portfolio" },
     ...sites,
-    ...socialViews.map((v) => ({
-      id: socialViewId(v.brand),
-      name: `${v.label} Social`,
-      url: "Instagram & Facebook",
-    })),
+    // Alphabetical, so the Social entries mirror the site list above them
+    // rather than inheriting META_PROFILES' arbitrary order.
+    ...[...socialViews]
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((v) => ({
+        id: socialViewId(v.brand),
+        name: `${v.label} Social`,
+        url: "Instagram & Facebook",
+      })),
     { id: WHATSAPP_VIEW, name: "WhatsApp", url: "intent & demand" },
   ];
   const activeSite = isWhatsapp
