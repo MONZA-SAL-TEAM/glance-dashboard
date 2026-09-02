@@ -16,7 +16,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 
 interface ThreadRow {
-  wa_id: string;
+  contact_id: string;
+  id_kind: string;
+  phone: string | null;
+  username: string | null;
   profile_name: string | null;
   last_message_at: string | null;
   last_preview: string | null;
@@ -35,9 +38,34 @@ interface MessageRow {
 
 const POLL_MS = 8_000;
 
-function formatNumberIntl(waId: string): string {
-  // wa_id is E.164 without the plus ("9617xxxxxxx").
-  return `+${waId}`;
+/**
+ * What to call a thread. Meta's BSUID rollout means a customer can hide
+ * their phone number behind a username, so the number is no longer
+ * guaranteed — fall back through name, username, then the opaque id rather
+ * than rendering "+" in front of a BSUID.
+ */
+function threadTitle(t: {
+  profile_name: string | null;
+  username: string | null;
+  phone: string | null;
+  contact_id: string;
+  id_kind: string;
+}): string {
+  if (t.profile_name) return t.profile_name;
+  if (t.phone) return `+${t.phone}`;
+  if (t.username) return `@${t.username}`;
+  return t.id_kind === "bsuid" ? "WhatsApp contact" : `+${t.contact_id}`;
+}
+
+/** The secondary line: the number when known, else the username. */
+function threadSubtitle(t: {
+  profile_name: string | null;
+  username: string | null;
+  phone: string | null;
+}): string {
+  if (t.phone) return `+${t.phone}`;
+  if (t.username) return `@${t.username}`;
+  return "";
 }
 
 function timeLabel(iso: string | null): string {
@@ -175,23 +203,25 @@ export function WhatsAppChats() {
         <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(220px,1fr)_2fr]">
           <ul className="max-h-[420px] space-y-1 overflow-y-auto pr-1">
             {threads.map((t) => (
-              <li key={t.wa_id}>
+              <li key={t.contact_id}>
                 <button
-                  onClick={() => setSelected(t.wa_id)}
+                  onClick={() => setSelected(t.contact_id)}
                   className={`w-full rounded-xl p-3 text-left transition-colors ${
-                    selected === t.wa_id ? "bg-sand" : "hover:bg-sand/50"
+                    selected === t.contact_id ? "bg-sand" : "hover:bg-sand/50"
                   }`}
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
-                      {t.profile_name || formatNumberIntl(t.wa_id)}
+                      {threadTitle(t)}
                     </p>
                     <p className="shrink-0 text-[11px] text-ink-soft">
                       {timeLabel(t.last_message_at)}
                     </p>
                   </div>
                   <p className="mt-0.5 truncate text-[12px] text-ink-soft">
-                    {t.profile_name ? `${formatNumberIntl(t.wa_id)} · ` : ""}
+                    {t.profile_name && threadSubtitle(t)
+                      ? `${threadSubtitle(t)} · `
+                      : ""}
                     {t.last_direction === "out" ? "You: " : ""}
                     {t.last_preview ?? ""}
                   </p>

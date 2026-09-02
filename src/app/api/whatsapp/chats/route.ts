@@ -12,7 +12,10 @@ export const dynamic = "force-dynamic";
  */
 
 interface ThreadRow {
-  wa_id: string;
+  contact_id: string;
+  id_kind: string;
+  phone: string | null;
+  username: string | null;
   profile_name: string | null;
   last_message_at: string | null;
   last_preview: string | null;
@@ -22,7 +25,7 @@ interface ThreadRow {
 
 interface MessageRow {
   id: string;
-  wa_id: string;
+  contact_id: string;
   direction: "in" | "out";
   msg_type: string;
   body: string | null;
@@ -45,12 +48,14 @@ export async function GET(request: NextRequest) {
     const waId = request.nextUrl.searchParams.get("thread");
 
     if (waId) {
-      // wa_ids are bare E.164 digits; anything else is not a thread.
-      if (!/^\d{5,20}$/.test(waId)) {
+      // A contact id is either a phone-based wa_id (digits) or a BSUID,
+      // which Meta documents as "CC." plus up to 128 characters — so digits
+      // alone is no longer a valid test.
+      if (!/^[A-Za-z0-9._:-]{5,128}$/.test(waId)) {
         return NextResponse.json({ error: "invalid thread" }, { status: 400 });
       }
       const messages = await supabaseRpc<MessageRow[]>("wa_thread_messages", {
-        p_wa_id: waId,
+        p_contact_id: waId,
         p_limit: 200,
         ...(token ? { p_token: token } : {}),
       });
