@@ -57,6 +57,8 @@ export interface PostRow {
   permalink?: string;
   posted_at?: string;
   model?: string;
+  model_raw?: string;
+  model_status?: "recognized" | "normalized" | "none";
   captured_on: string;
   reach?: number;
   views?: number;
@@ -139,24 +141,77 @@ function totalOf(entry: InsightEntry | undefined): number | undefined {
   return undefined;
 }
 
+export interface ModelMatch {
+  /** The CANONICAL_MODELS value, or undefined when nothing matched. */
+  model?: string;
+  /** The caption fragment that produced it — the audit trail. */
+  raw?: string;
+  /**
+   * recognized  the caption named the model exactly
+   * normalized  a variant (hashtag, no separators) was mapped
+   * none        no model mentioned
+   */
+  status: "recognized" | "normalized" | "none";
+}
+
 /**
  * Best-effort model tagging from a caption. Reuses CANONICAL_MODELS so social
  * content groups by the same vocabulary as website signals and the demand
  * board — otherwise "which vehicle performs best" would answer differently
  * depending on which page you asked.
  *
+ * Returns raw AND canonical AND status, never the canonical alone. Deriving a
+ * value and discarding what produced it is what made the brand-vocabulary bug
+ * unfixable retroactively: with only "Monza SAL" stored there was no way to
+ * find the rows that came from "the Monza lineup", or to re-derive them when
+ * the mapping changed.
+ *
  * Longest name first: "VOYAH Passion L" must win over "VOYAH Passion".
  */
-export function modelFromCaption(caption: string | undefined): string | undefined {
-  if (!caption) return undefined;
-  const hay = caption.toLowerCase().replace(/[#_]/g, " ").replace(/\s+/g, " ");
+/**
+ * Collapse for hashtag matching. "+" becomes "plus" BEFORE punctuation is
+ * stripped, because dropping it makes "VOYAH Free+" and "VOYAH Free"
+ * identical — and since Free+ is the longer name it would win, silently
+ * relabelling every Free mention as Free+.
+ */
+function collapse(value: string): string {
+  return value.toLowerCase().replace(/\+/g, "plus").replace(/[^a-z0-9]/g, "");
+}
+
+export function matchModel(caption: string | undefined): ModelMatch {
+  if (!caption) return { status: "none" };
+  const spaced = caption.toLowerCase().replace(/[#_]/g, " ").replace(/\s+/g, " ");
+  const squashed = collapse(caption);
   const ordered = [...CANONICAL_MODELS].sort((a, b) => b.length - a.length);
+
+  // Two passes, not one interleaved loop. An exact mention anywhere must beat
+  // a collapsed match on a different model: with a single pass, "VOYAH Free+"
+  // got its hashtag attempt before "VOYAH Free" got its exact one.
   for (const model of ordered) {
-    if (hay.includes(model.toLowerCase())) return model;
-    // "#voyahpassionl" — hashtags arrive without separators.
-    if (hay.includes(model.toLowerCase().replace(/[\s+]/g, ""))) return model;
+    if (spaced.includes(model.toLowerCase())) {
+      return { model, raw: model, status: "recognized" };
+    }
   }
-  return undefined;
+
+  for (const model of ordered) {
+    const collapsed = collapse(model);
+    if (collapsed && squashed.includes(collapsed)) {
+      // Recover the fragment as written, so the audit trail shows what the
+      // caption actually said rather than the value we mapped it to.
+      const re = new RegExp(`#?${collapsed.split("").join("[^a-z0-9]?")}`, "i");
+      return {
+        model,
+        raw: caption.match(re)?.[0] ?? model,
+        status: "normalized",
+      };
+    }
+  }
+  return { status: "none" };
+}
+
+/** Back-compat helper for callers that only need the canonical value. */
+export function modelFromCaption(caption: string | undefined): string | undefined {
+  return matchModel(caption).model;
 }
 
 const isoDay = (d: Date) => format(d, "yyyy-MM-dd");
@@ -292,6 +347,7 @@ async function instagramSnapshot(
     );
     const pm = new Map((insights?.data ?? []).map((e) => [e.name, e]));
     const caption = m.caption ? String(m.caption) : undefined;
+    const matched = matchModel(caption);
     out.posts.push({
       id: postId,
       profile_key: key,
@@ -301,7 +357,9 @@ async function instagramSnapshot(
       caption,
       permalink: m.permalink ? String(m.permalink) : undefined,
       posted_at: m.timestamp ? String(m.timestamp) : undefined,
-      model: modelFromCaption(caption),
+      model: matched.model,
+      model_raw: matched.raw,
+      model_status: matched.status,
       captured_on: today,
       reach: totalOf(pm.get("reach")),
       views: totalOf(pm.get("views")),
