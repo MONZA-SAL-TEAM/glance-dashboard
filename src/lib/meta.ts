@@ -496,7 +496,17 @@ async function facebookProfile(
   const [reachEntry, engagedEntry] = await Promise.all([
     facebookMetric(
       id,
-      ["page_impressions_unique", "page_impressions", "page_reach"],
+      // Meta retired the whole page_impressions family and renamed the
+      // concept to "media view": page_impressions_unique ->
+      // page_total_media_view_unique, page_impressions -> page_media_view
+      // (deprecations completing through 2026). The retired names stay at
+      // the end of the list so an older API version still answers.
+      [
+        "page_total_media_view_unique",
+        "page_media_view",
+        "page_impressions_unique",
+        "page_impressions",
+      ],
       cfg.label,
       since,
       until,
@@ -505,7 +515,10 @@ async function facebookProfile(
     ),
     facebookMetric(
       id,
-      ["page_post_engagements", "page_total_actions"],
+      // Meta published no direct replacement for the engagement metrics, so
+      // this is a best-effort list; when every candidate fails the panel
+      // says so in its notes rather than showing a confident zero.
+      ["page_post_engagements", "page_content_activity", "page_total_actions"],
       cfg.label,
       since,
       until,
