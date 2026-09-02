@@ -10,9 +10,13 @@ export async function middleware(request: NextRequest) {
     pathname === "/login" ||
     pathname.startsWith("/api/auth") ||
     // Scheduled jobs authenticate themselves (CRON_SECRET bearer or a valid
-    // dashboard cookie) — see src/lib/cron-auth.ts.
+    // dashboard cookie) — see src/lib/cron-auth.ts. A job route missing from
+    // this list is rejected here before its own auth ever runs, which is a
+    // silent failure: the schedule 401s forever and the only visible symptom
+    // is data that never arrives.
     pathname === "/api/health/run" ||
     pathname === "/api/digest/run" ||
+    pathname === "/api/social/snapshot" ||
     // Meta's webhook cannot carry a login cookie; it authenticates itself
     // (GET: verify token handshake, POST: X-Hub-Signature-256 HMAC).
     pathname === "/api/whatsapp/webhook" ||
