@@ -264,18 +264,34 @@ async function instagramSnapshot(
     ),
   );
 
-  // Daily series — the backfill. reach and follower_count both support
-  // period=day with since/until, so one call yields ~30 days of history.
-  const series = await attempt(`${cfg.label} · IG daily series`, out.notes, () =>
+  // Daily series — the backfill. Requested SEPARATELY rather than as one
+  // "reach,follower_count" call: Meta rejects a whole request when any single
+  // metric in it is invalid, and that is exactly how the Facebook panel read
+  // zero twice. `reach` is proven in production; `follower_count` is not yet.
+  // Batching them would let an unproven metric take the proven one down.
+  const reachSeries = await attempt(`${cfg.label} · IG reach series`, out.notes, () =>
     graph<{ data: InsightEntry[] }>(
       `${id}/insights`,
-      { metric: "reach,follower_count", period: "day", since, until },
+      { metric: "reach", period: "day", since, until },
       cfg.token,
     ),
   );
-  const byName = new Map((series?.data ?? []).map((e) => [e.name, e]));
-  const reachByDay = seriesByDay(byName.get("reach"));
-  const followersByDay = seriesByDay(byName.get("follower_count"));
+  const followerSeries = await attempt(
+    `${cfg.label} · IG follower_count series`,
+    out.notes,
+    () =>
+      graph<{ data: InsightEntry[] }>(
+        `${id}/insights`,
+        { metric: "follower_count", period: "day", since, until },
+        cfg.token,
+      ),
+  );
+  const reachByDay = seriesByDay(
+    (reachSeries?.data ?? []).find((e) => e.name === "reach"),
+  );
+  const followersByDay = seriesByDay(
+    (followerSeries?.data ?? []).find((e) => e.name === "follower_count"),
+  );
 
   const levels = reconstructFollowerLevels(
     account?.followers_count,
@@ -335,17 +351,36 @@ async function instagramSnapshot(
   );
   for (const m of media?.data ?? []) {
     const postId = String(m.id);
+    // The proven set, exactly as the live Social view requests it.
     const insights = await attempt(
       `${cfg.label} · IG post insights`,
       out.notes,
       () =>
         graph<{ data: InsightEntry[] }>(
           `${postId}/insights`,
-          { metric: "reach,views,total_interactions,saved,shares" },
+          { metric: "reach,total_interactions,saved,shares" },
           cfg.token,
         ),
     );
-    const pm = new Map((insights?.data ?? []).map((e) => [e.name, e]));
+    // `views` is newer and not valid for every media type. Asked for on its
+    // own so an unsupported post costs the view count alone, not the reach
+    // and engagement of every post in the account.
+    const viewsInsight = await attempt(
+      `${cfg.label} · IG post views`,
+      out.notes,
+      () =>
+        graph<{ data: InsightEntry[] }>(
+          `${postId}/insights`,
+          { metric: "views" },
+          cfg.token,
+        ),
+    );
+    const pm = new Map(
+      [...(insights?.data ?? []), ...(viewsInsight?.data ?? [])].map((e) => [
+        e.name,
+        e,
+      ]),
+    );
     const caption = m.caption ? String(m.caption) : undefined;
     const matched = matchModel(caption);
     out.posts.push({
@@ -382,9 +417,12 @@ async function instagramSnapshot(
   for (const st of stories?.data ?? []) {
     const storyId = String(st.id);
     const si = await attempt(`${cfg.label} · IG story insights`, out.notes, () =>
+      // `navigation` returns a breakdown object rather than a scalar and is
+      // never stored — asking for it could only fail the call and cost the
+      // three metrics that are stored.
       graph<{ data: InsightEntry[] }>(
         `${storyId}/insights`,
-        { metric: "views,reach,replies,navigation" },
+        { metric: "views,reach,replies" },
         cfg.token,
       ),
     );
