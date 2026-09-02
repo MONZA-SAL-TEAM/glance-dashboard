@@ -24,6 +24,30 @@ export const KNOWN_SITES: Record<string, KnownSite> = {
   },
 };
 
+/**
+ * Instagram click-outs recorded on ONE brand's own site.
+ *
+ * The Social views are per-brand, but this figure was summed across the whole
+ * portfolio, so every brand's view showed the same number. On MHERO Social —
+ * a brand with no Instagram account configured at all — that presented
+ * VOYAH's click-outs as MHERO's.
+ *
+ * A brand's site is matched on the alias it already shares with KNOWN_SITES
+ * ("voyah", "mhero", "monza"). Returns undefined when a brand has no site to
+ * measure, because 0 would assert that its visitors tapped through zero
+ * times, which is a different claim from having nothing to count. The legacy
+ * bare "social" view passes no brand and keeps the portfolio-wide total.
+ */
+export function instagramSignalsForBrand(
+  sites: ReadonlyArray<{ alias: string; byType: { instagram_click: number } }>,
+  brand: string,
+): number | undefined {
+  if (!brand) return sites.reduce((a, s) => a + s.byType.instagram_click, 0);
+  const scoped = sites.filter((s) => s.alias === brand);
+  if (!scoped.length) return undefined;
+  return scoped.reduce((a, s) => a + s.byType.instagram_click, 0);
+}
+
 /** Display order for the portfolio view: brand sites first, corporate last. */
 export const PORTFOLIO_ORDER = ["541962515", "540543412", "547222815"];
 

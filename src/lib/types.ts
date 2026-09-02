@@ -333,6 +333,9 @@ export interface SocialSeriesPoint {
   views: number;
 }
 
+/** A profile metric Meta can decline to report. */
+export type SocialMetric = "reach" | "engaged";
+
 export interface SocialProfile {
   label: string;
   network: SocialNetwork;
@@ -345,6 +348,12 @@ export interface SocialProfile {
   profileViews: number;
   websiteClicks: number;
   engaged: number;
+  /**
+   * Metrics Meta returned nothing for. Rendered as "—", never as 0:
+   * "nobody was reached" and "the number was not reported" are different
+   * claims, and only one of them is true here.
+   */
+  unavailable?: SocialMetric[];
   series: SocialSeriesPoint[];
 }
 

@@ -6,6 +6,7 @@ import { formatChartDate, formatNumber } from "@/lib/format";
 import type {
   SocialAudienceRow,
   SocialPayload,
+  SocialMetric,
   SocialProfile,
 } from "@/lib/types";
 
@@ -41,6 +42,17 @@ function Stat({
   );
 }
 
+/**
+ * A metric Meta declined to report renders as an em dash. Formatting it as 0
+ * would state that nobody was reached, which is a claim we cannot make — and
+ * the panel's own footer already promises that anything Meta withheld is
+ * missing from the view rather than shown as a zero.
+ */
+function metric(profile: SocialProfile, key: SocialMetric): string {
+  if (profile.unavailable?.includes(key)) return "—";
+  return formatNumber(key === "reach" ? profile.reach : profile.engaged);
+}
+
 function ProfileCard({ profile }: { profile: SocialProfile }) {
   const spark = profile.series.map((p) => ({ ...p }));
   return (
@@ -68,7 +80,7 @@ function ProfileCard({ profile }: { profile: SocialProfile }) {
 
       <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
         <Stat label="Followers" value={formatNumber(profile.followers)} />
-        <Stat label="Reach" value={formatNumber(profile.reach)} hint="people" />
+        <Stat label="Reach" value={metric(profile, "reach")} hint="people" />
         {profile.network === "instagram" ? (
           <>
             <Stat label="Views" value={formatNumber(profile.views)} />
@@ -83,7 +95,7 @@ function ProfileCard({ profile }: { profile: SocialProfile }) {
             <Stat label="Accounts engaged" value={formatNumber(profile.engaged)} />
           </>
         ) : (
-          <Stat label="Engagements" value={formatNumber(profile.engaged)} />
+          <Stat label="Engagements" value={metric(profile, "engaged")} />
         )}
       </div>
 
@@ -245,6 +257,11 @@ export function SocialPanel({
   const ig = data.profiles.filter((p) => p.network === "instagram");
   const totalFollowers = data.profiles.reduce((a, p) => a + p.followers, 0);
   const totalReach = data.profiles.reduce((a, p) => a + p.reach, 0);
+  // If every profile withheld reach there is no total to state — summing
+  // absences into 0 is how "not reported" becomes "nobody was reached".
+  const reachReported = data.profiles.some(
+    (p) => !p.unavailable?.includes("reach"),
+  );
   const totalWebsiteTaps = ig.reduce((a, p) => a + p.websiteClicks, 0);
 
   return (
@@ -259,7 +276,11 @@ export function SocialPanel({
         </p>
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Stat label="Followers" value={formatNumber(totalFollowers)} hint="all profiles" />
-          <Stat label="Reach" value={formatNumber(totalReach)} hint="people reached" />
+          <Stat
+            label="Reach"
+            value={reachReported ? formatNumber(totalReach) : "—"}
+            hint="people reached"
+          />
           <Stat label="Website taps" value={formatNumber(totalWebsiteTaps)} hint="from Instagram" />
           <Stat
             label="Instagram signals"

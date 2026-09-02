@@ -1,4 +1,5 @@
 import { metaProfiles, socialBrands } from "../src/lib/meta";
+import { instagramSignalsForBrand } from "../src/lib/sites";
 
 /** metaProfiles/socialBrands read process.env at call time, so each case
  * sets the environment and re-reads rather than importing a snapshot. */
@@ -144,6 +145,29 @@ withEnv(
     check("working brand survives a neighbour's typo", metaProfiles().length === 1);
   },
 );
+
+console.log("Instagram signals belong to the brand whose view is open:");
+// Found on the MHERO Social view: it showed 34 Instagram click-outs for a
+// brand with no Instagram account configured. The figure was summed across
+// the whole portfolio, so every brand's view displayed VOYAH's number.
+const SITES = [
+  { alias: "voyah", byType: { instagram_click: 34 } },
+  { alias: "mhero", byType: { instagram_click: 2 } },
+  { alias: "monza", byType: { instagram_click: 7 } },
+];
+check("voyah sees only its own", instagramSignalsForBrand(SITES, "voyah") === 34);
+check("mhero sees only its own", instagramSignalsForBrand(SITES, "mhero") === 2);
+check(
+  "two brands no longer report the same number",
+  instagramSignalsForBrand(SITES, "voyah") !== instagramSignalsForBrand(SITES, "mhero"),
+);
+check(
+  "a brand with no site reports nothing, not zero",
+  instagramSignalsForBrand(SITES, "nosuchbrand") === undefined,
+);
+// The bare "social" id from the single-view version passes no brand.
+check("legacy view keeps the portfolio total", instagramSignalsForBrand(SITES, "") === 43);
+check("no sites at all totals zero", instagramSignalsForBrand([], "") === 0);
 
 if (failures > 0) {
   console.log(`\n${failures} check(s) failed`);
