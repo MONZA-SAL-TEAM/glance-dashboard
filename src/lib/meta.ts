@@ -77,12 +77,45 @@ function brandSlug(label: string): string {
   );
 }
 
+/**
+ * Every variable holding profile config, in a stable order: META_PROFILES
+ * first, then any META_PROFILES_* suffix sorted by name.
+ *
+ * A second brand is added by setting its OWN variable, never by rewriting
+ * the first. These values are normally stored as Vercel secrets, whose
+ * contents cannot be read back — so "append a brand" would otherwise mean
+ * retyping a working brand's ids from memory and hoping nothing was lost.
+ * Splitting them also keeps each brand's assets beside its own token_env,
+ * which is how Monza's two Meta portfolios are actually separated.
+ */
+function profileSources(): string[] {
+  const suffixed = Object.keys(process.env)
+    .filter((k) => k.startsWith("META_PROFILES_"))
+    .sort();
+  return ["META_PROFILES", ...suffixed]
+    .map((k) => process.env[k])
+    .filter((v): v is string => Boolean(v && v.trim()));
+}
+
 /** META_PROFILES mirrors the GA_PROPERTIES pattern already used for GA4. */
 export function metaProfiles(): MetaProfileConfig[] {
-  const raw = process.env.META_PROFILES;
-  if (!raw) return [];
+  const sources = profileSources();
+  if (!sources.length) return [];
+  const parsed: Array<Record<string, string>> = [];
+  for (const raw of sources) {
+    try {
+      const one = JSON.parse(raw) as unknown;
+      // A single object is accepted as well as an array: a per-brand variable
+      // holds one brand, and requiring [] around it invites a silent typo.
+      if (Array.isArray(one)) parsed.push(...(one as Array<Record<string, string>>));
+      else if (one && typeof one === "object") parsed.push(one as Record<string, string>);
+    } catch {
+      // One malformed variable must not blank out every other brand — that
+      // would turn a typo in a new brand into an outage for a working one.
+      continue;
+    }
+  }
   try {
-    const parsed = JSON.parse(raw) as Array<Record<string, string>>;
     return parsed
       .map((p) => {
         const label = p.label || p.name || "Profile";

@@ -103,6 +103,48 @@ withEnv(
   },
 );
 
+console.log("a brand is added by its OWN variable, never by rewriting another:");
+// These are stored as Vercel secrets, which cannot be read back. If a second
+// brand had to be appended to META_PROFILES, adding MHERO would mean retyping
+// VOYAH's ids from memory over a value nobody can diff.
+withEnv(
+  {
+    META_ACCESS_TOKEN: VOYAH_TOKEN,
+    META_ACCESS_TOKEN_MHERO: "mhero-token-longer-than-twenty-chars",
+    META_PROFILES: JSON.stringify([{ label: "VOYAH Lebanon", ig_user_id: "1" }]),
+    META_PROFILES_MHERO: JSON.stringify({
+      label: "MHERO Lebanon",
+      brand: "mhero",
+      page_id: "419538711242175",
+      token_env: "META_ACCESS_TOKEN_MHERO",
+    }),
+  },
+  () => {
+    const profiles = metaProfiles();
+    check("both brands present", profiles.length === 2);
+    check("the untouched brand still resolves", profiles[0].igUserId === "1");
+    check("the added brand resolves", profiles[1].pageId === "419538711242175");
+    check("each keeps its own token", profiles[0].token !== profiles[1].token);
+    check("a bare object needs no array wrapper", profiles[1].brand === "mhero");
+    check("two Social views", socialBrands().length === 2);
+    // "M HERO Lebanon" would render as "M Social" — the label is display text,
+    // so it spells the brand the way the dropdown should read.
+    check("view label reads MHERO", socialBrands()[1].label === "MHERO");
+  },
+);
+
+console.log("one malformed variable does not blank out a working brand:");
+withEnv(
+  {
+    META_ACCESS_TOKEN: VOYAH_TOKEN,
+    META_PROFILES: JSON.stringify([{ label: "VOYAH Lebanon", ig_user_id: "1" }]),
+    META_PROFILES_BROKEN: "{not json",
+  },
+  () => {
+    check("working brand survives a neighbour's typo", metaProfiles().length === 1);
+  },
+);
+
 if (failures > 0) {
   console.log(`\n${failures} check(s) failed`);
   process.exit(1);
