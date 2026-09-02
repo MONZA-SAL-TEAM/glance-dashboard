@@ -6,6 +6,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * The WhatsApp inbox: every conversation between the business and a
  * customer, read-only, refreshed continuously.
  *
+ * Read-only is a permanent architectural boundary, not a current
+ * limitation. Glance is a viewing and analysis layer over Monza's systems;
+ * conversations are handled — and replies sent — in the customer chat
+ * system. Adding a send path here would turn a reporting tool into a second
+ * operational system competing with the one that already owns the
+ * conversation.
+ *
  * Self-polling on purpose — chats refresh on their own cadence (~8s, like
  * the realtime panel's 15s), independent of the analytics range selector,
  * so this component owns its fetching rather than threading yet another
@@ -178,7 +185,7 @@ export function WhatsAppChats() {
           </p>
         </div>
         <span className="rounded-full bg-sand/80 px-3 py-1 text-[11px] font-medium text-ink-soft">
-          read-only inbox · replying stays on the phone for now
+          Read-only by design · replies happen in the customer chat system
         </span>
       </div>
 

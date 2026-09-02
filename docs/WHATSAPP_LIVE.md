@@ -5,6 +5,20 @@ dormant. The store is empty and the webhook rejects everything until the
 steps below are done. **Nothing in this codebase can register, deregister,
 or message; the phone's WhatsApp login cannot be affected by deploying it.**
 
+## Read-only by design
+
+Glance reads and analyses; it does not operate. Conversations are handled —
+and replies sent — in the customer chat system, which already owns that job.
+Glance's inbox exists to *view* conversations and report on them: volume, AI
+versus human handling, unanswered threads, response times, and which vehicle
+or campaign produced each conversation.
+
+This is a permanent architectural boundary, not a phase. A send path is not
+planned, and adding one would make Glance a second operational system
+competing with the one that already owns the conversation. Anyone extending
+this code should treat "no outbound messaging" as a constraint to design
+within rather than a gap to fill.
+
 ## What exists already
 
 - `POST /api/whatsapp/webhook` — HMAC-verified (X-Hub-Signature-256)
@@ -14,8 +28,9 @@ or message; the phone's WhatsApp login cannot be affected by deploying it.**
   all access through token-gated `SECURITY DEFINER` RPCs
   (`api.wa_ingest`, `api.wa_threads`, `api.wa_thread_messages`).
 - The Chats panel on the WhatsApp view — thread list + conversation
-  bubbles, both directions (customer messages and replies sent from the
-  phone arrive via Coexistence echo events), ~8s refresh.
+  bubbles, both directions, ~8s refresh. Replies sent from the customer
+  chat system arrive here as Coexistence echo events, so the thread reads
+  as a whole conversation; sending is not possible from Glance.
 
 ## Go-live steps, in order
 
