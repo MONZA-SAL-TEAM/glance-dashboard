@@ -85,7 +85,9 @@ check("image caption", messageBody({ type: "image", image: { caption: "front vie
 check("bare image placeholder", messageBody({ type: "image" }) === "📷 photo");
 check("voice note", messageBody({ type: "audio" }) === "🎙 voice message");
 check("document filename", messageBody({ type: "document", document: { filename: "offer.pdf" } }) === "📄 offer.pdf");
-check("unknown type bracketed", messageBody({ type: "order" }) === "[order]");
+// `order` has had its own case since referral support landed; use a type
+// with no case at all to exercise the default branch.
+check("unknown type bracketed", messageBody({ type: "poll" }) === "[poll]");
 
 console.log("BSUID identity (Meta's forward-compatible key):");
 // Inbound from a customer who has adopted a WhatsApp username: Meta sends
