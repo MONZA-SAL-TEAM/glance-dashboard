@@ -519,6 +519,7 @@ async function instagramSnapshot(
     ),
   );
   const hourly = online?.data?.[0]?.values?.[online.data[0].values!.length - 1];
+  const beforeOnline = out.audience.length;
   if (hourly && typeof hourly.value === "object") {
     for (const [hour, value] of Object.entries(hourly.value)) {
       out.audience.push({
@@ -530,12 +531,18 @@ async function instagramSnapshot(
         value: Number(value) || 0,
       });
     }
-  } else if (online) {
-    // The call SUCCEEDED and carried nothing usable. Without this note that
-    // is invisible: attempt() only records failures, so a metric answering
-    // with an empty body writes no rows, raises no error, and looks exactly
-    // like a metric nobody asked for. `online_followers` has been returning
-    // empty here, so "when followers are online" has silently never worked.
+  }
+  // Note on the OUTCOME, not the shape. attempt() records only failures, so a
+  // call that succeeds and carries nothing writes no rows, raises no error,
+  // and looks exactly like a metric nobody asked for — the warehouse has
+  // never held an online_hour row and no run ever said why.
+  //
+  // Checking the shape is not enough, and this is the bug that proved it: a
+  // well-formed response whose hourly value is an EMPTY object takes the loop
+  // above, writes nothing, and skips any else branch. Counting what actually
+  // landed covers every way of arriving empty, including ones Meta has not
+  // invented yet.
+  if (online && out.audience.length === beforeOnline) {
     out.notes.push(
       `${cfg.label} · IG online followers — returned no hourly data`,
     );
