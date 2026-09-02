@@ -268,18 +268,34 @@ export async function fetchOverview(
     sessions: metricNumber(row, 1),
   }));
 
-  const sources: SourceRow[] = (sourcesRes[0].rows ?? []).map((row) => {
+  // Distinct raw pairs can clean to the same label — GA4 emits "(direct)"
+  // alongside blanks and "(not set)", which all mean unattributed. Left as
+  // separate rows they render as the same line twice, which reads as a bug
+  // and makes the list impossible to total by eye. Summed on the cleaned key.
+  const sourceTotals = new Map<string, SourceRow>();
+  for (const row of sourcesRes[0].rows ?? []) {
     const source = cleanLabel(dimensionValue(row, 0), "(direct)");
     const medium = cleanLabel(dimensionValue(row, 1), "(none)");
-    return {
+    const key = `${source} ${medium}`;
+    const entry = sourceTotals.get(key) ?? {
       source,
       medium,
       platform: classifySource(source, medium),
-      users: metricNumber(row, 0),
-      sessions: metricNumber(row, 1),
-      engagedSessions: metricNumber(row, 2),
+      users: 0,
+      sessions: 0,
+      engagedSessions: 0,
     };
-  });
+    // Users are deduplicated by GA per row, so summing them across merged
+    // rows can double-count one visitor. Sessions cannot, and sessions are
+    // what the panel ranks on.
+    entry.users += metricNumber(row, 0);
+    entry.sessions += metricNumber(row, 1);
+    entry.engagedSessions += metricNumber(row, 2);
+    sourceTotals.set(key, entry);
+  }
+  const sources: SourceRow[] = [...sourceTotals.values()].sort(
+    (a, b) => b.sessions - a.sessions,
+  );
 
   const landings: LandingRow[] = (landingsRes[0].rows ?? [])
     .filter((row) => dimensionValue(row, 0).trim() !== "(not set)")
