@@ -49,7 +49,20 @@ const ALL_SITES = "all";
 const MONZA_PROPERTY_ID = "547222815";
 
 /** Sentinel "site" for the Instagram + Facebook view. */
-const SOCIAL_VIEW = "social";
+/**
+ * Social views are per-brand: "social:voyah", "social:mhero". Brands sit in
+ * separate Meta business portfolios with separate tokens, so one combined
+ * view would either merge unrelated accounts or die whenever any one token
+ * broke. The bare "social" id from the single-view version still resolves,
+ * so old bookmarks keep working.
+ */
+const SOCIAL_PREFIX = "social";
+const isSocialView = (id: string) =>
+  id === SOCIAL_PREFIX || id.startsWith(`${SOCIAL_PREFIX}:`);
+const socialViewId = (brand: string) => `${SOCIAL_PREFIX}:${brand}`;
+const brandOfSocialView = (id: string) =>
+  id.startsWith(`${SOCIAL_PREFIX}:`) ? id.slice(SOCIAL_PREFIX.length + 1) : "";
+
 /** WhatsApp intent view — first-party demand analytics, read-only. */
 const WHATSAPP_VIEW = "whatsapp";
 
@@ -106,6 +119,9 @@ export function Dashboard() {
   const modelPagesSeq = useRef(0);
   const socialSeq = useRef(0);
   const whatsappSeq = useRef(0);
+  const [socialViews, setSocialViews] = useState<
+    Array<{ brand: string; label: string }>
+  >([]);
 
   // Adopt shareable URL state (?site=voyah&range=28d&filter=lb), falling back
   // to the per-browser stored filter. Runs once; fetch effects wait on `ready`.
@@ -116,7 +132,7 @@ export function Dashboard() {
       const rangeParam = params.get("range");
       const filterParam = params.get("filter");
 
-      if (siteParam === SOCIAL_VIEW || siteParam === WHATSAPP_VIEW) {
+      if (siteParam && (isSocialView(siteParam) || siteParam === WHATSAPP_VIEW)) {
         setPropertyId(siteParam);
       } else if (siteParam && siteParam !== ALL_SITES) {
         setPropertyId(aliasToPropertyId(siteParam) ?? siteParam);
@@ -151,7 +167,7 @@ export function Dashboard() {
     try {
       const site =
         propertyId === ALL_SITES ||
-        propertyId === SOCIAL_VIEW ||
+        isSocialView(propertyId) ||
         propertyId === WHATSAPP_VIEW
           ? propertyId
           : propertyIdToAlias(propertyId);
@@ -171,10 +187,12 @@ export function Dashboard() {
         const res = await fetch("/api/properties", { cache: "no-store" });
         const data = (await res.json()) as {
           properties?: SiteProperty[];
+          socialBrands?: Array<{ brand: string; label: string }>;
           warning?: string;
           error?: string;
         };
         setSites(data.properties ?? []);
+        setSocialViews(data.socialBrands ?? []);
         setSitesWarning(data.warning ?? data.error ?? null);
       } catch {
         setError("Could not load websites list");
@@ -373,11 +391,14 @@ export function Dashboard() {
     [],
   );
 
-  const loadSocial = useCallback(async (nextRange: DateRangeKey) => {
+  const loadSocial = useCallback(async (nextRange: DateRangeKey, brand: string) => {
     const seq = ++socialSeq.current;
     setLoadingSocial(true);
     try {
-      const res = await fetch(`/api/social?range=${nextRange}`, {
+      const query = brand
+        ? `range=${nextRange}&brand=${encodeURIComponent(brand)}`
+        : `range=${nextRange}`;
+      const res = await fetch(`/api/social?${query}`, {
         cache: "no-store",
       });
       if (!res.ok) {
@@ -425,21 +446,36 @@ export function Dashboard() {
     }
   }, []);
 
-  const isSocial = propertyId === SOCIAL_VIEW;
+  // A bookmark from the single-view version says "social" with no brand.
+  // Once the brand list arrives, upgrade it to the first real view so the
+  // switcher has something to select rather than showing a blank option.
+  useEffect(() => {
+    if (propertyId !== SOCIAL_PREFIX || socialViews.length === 0) return;
+    setPropertyId(socialViewId(socialViews[0].brand));
+  }, [propertyId, socialViews]);
+
+  const isSocial = isSocialView(propertyId);
   const isWhatsapp = propertyId === WHATSAPP_VIEW;
   const isPortfolio = propertyId === ALL_SITES;
   const isModelSite = MODEL_PROPERTY_IDS.includes(propertyId);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW || propertyId === WHATSAPP_VIEW) return;
+    if (
+      !ready ||
+      !propertyId ||
+      propertyId === ALL_SITES ||
+      isSocialView(propertyId) ||
+      propertyId === WHATSAPP_VIEW
+    )
+      return;
     startTransition(() => {
       void loadOverview(range, propertyId, filter);
     });
   }, [ready, range, propertyId, filter, loadOverview]);
 
   useEffect(() => {
-    if (!ready || propertyId !== SOCIAL_VIEW) return;
-    void loadSocial(range);
+    if (!ready || !isSocialView(propertyId)) return;
+    void loadSocial(range, brandOfSocialView(propertyId));
   }, [ready, propertyId, range, loadSocial]);
 
   useEffect(() => {
@@ -453,14 +489,21 @@ export function Dashboard() {
   }, [ready, range, propertyId, loadDeadUrls]);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW || propertyId === WHATSAPP_VIEW) return;
+    if (
+      !ready ||
+      !propertyId ||
+      propertyId === ALL_SITES ||
+      isSocialView(propertyId) ||
+      propertyId === WHATSAPP_VIEW
+    )
+      return;
     void loadSignals(range, propertyId);
   }, [ready, range, propertyId, loadSignals]);
 
   // The social view also needs portfolio data: it reports how many Instagram
   // click-outs those audiences actually produced on the sites.
   useEffect(() => {
-    if (!ready || (propertyId !== ALL_SITES && propertyId !== SOCIAL_VIEW))
+    if (!ready || (propertyId !== ALL_SITES && !isSocialView(propertyId)))
       return;
     startTransition(() => {
       void loadPortfolio(range, filter);
@@ -473,7 +516,14 @@ export function Dashboard() {
   }, [ready, propertyId, range, filter, loadModelPages]);
 
   useEffect(() => {
-    if (!ready || !propertyId || propertyId === ALL_SITES || propertyId === SOCIAL_VIEW || propertyId === WHATSAPP_VIEW) return;
+    if (
+      !ready ||
+      !propertyId ||
+      propertyId === ALL_SITES ||
+      isSocialView(propertyId) ||
+      propertyId === WHATSAPP_VIEW
+    )
+      return;
 
     let cancelled = false;
     const tick = () => {
@@ -496,13 +546,27 @@ export function Dashboard() {
   const switcherSites: SiteProperty[] = [
     { id: ALL_SITES, name: "All sites", url: "portfolio" },
     ...sites,
-    { id: SOCIAL_VIEW, name: "Social", url: "Instagram & Facebook" },
+    // Alphabetical, so the Social entries mirror the site list above them
+    // rather than inheriting META_PROFILES' arbitrary order.
+    ...[...socialViews]
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((v) => ({
+        id: socialViewId(v.brand),
+        name: `${v.label} Social`,
+        url: "Instagram & Facebook",
+      })),
     { id: WHATSAPP_VIEW, name: "WhatsApp", url: "intent & demand" },
   ];
   const activeSite = isWhatsapp
     ? { id: WHATSAPP_VIEW, name: "WhatsApp" }
     : isSocial
-    ? { id: SOCIAL_VIEW, name: "Social" }
+    ? {
+        id: propertyId,
+        name: `${
+          socialViews.find((v) => v.brand === brandOfSocialView(propertyId))
+            ?.label ?? "Social"
+        } Social`,
+      }
     : isPortfolio
     ? { id: ALL_SITES, name: "All sites" }
     : sites.find((s) => s.id === propertyId) ||

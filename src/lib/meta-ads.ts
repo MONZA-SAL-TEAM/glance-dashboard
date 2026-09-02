@@ -1,4 +1,9 @@
-import { attempt, graph, metaProfiles } from "./meta";
+import {
+  attempt,
+  graph,
+  metaProfiles,
+  type MetaProfileConfig,
+} from "./meta";
 import type { AdCampaignRow, AdsSummary } from "./types";
 
 /**
@@ -59,11 +64,13 @@ export function adsConfigured(): boolean {
 }
 
 export async function fetchAds(
+  /** Only this brand's profiles — each carries its own token. */
+  profiles: MetaProfileConfig[],
   since: string,
   until: string,
   notes: string[],
 ): Promise<AdsSummary> {
-  const accounts = metaProfiles().filter((p) => p.adAccountId);
+  const accounts = profiles.filter((p) => p.adAccountId);
   if (accounts.length === 0) {
     return { configured: false, campaigns: [], spend: 0, leads: 0, clicks: 0, impressions: 0, reach: 0 };
   }
@@ -73,13 +80,17 @@ export async function fetchAds(
   for (const acct of accounts) {
     const id = acct.adAccountId as string;
     const res = await attempt(`${acct.label} · ads insights`, notes, () =>
-      graph<{ data: InsightRow[] }>(`${id}/insights`, {
-        level: "campaign",
-        time_range: JSON.stringify({ since, until }),
-        fields:
-          "campaign_id,campaign_name,spend,impressions,reach,clicks,ctr,cpc,actions,cost_per_action_type",
-        limit: "50",
-      }),
+      graph<{ data: InsightRow[] }>(
+        `${id}/insights`,
+        {
+          level: "campaign",
+          time_range: JSON.stringify({ since, until }),
+          fields:
+            "campaign_id,campaign_name,spend,impressions,reach,clicks,ctr,cpc,actions,cost_per_action_type",
+          limit: "50",
+        },
+        acct.token,
+      ),
     );
 
     for (const row of res?.data ?? []) {
