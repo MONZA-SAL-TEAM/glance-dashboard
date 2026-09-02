@@ -19,7 +19,19 @@ import { createHmac, timingSafeEqual } from "crypto";
 export interface WaEvent {
   kind: "message" | "status";
   id: string;
+  /**
+   * Business-Scoped User ID — Meta's durable customer identity. Present once
+   * BSUID is rolled out for the account; the store keys on it in preference
+   * to the phone number.
+   */
+  bsuid?: string;
+  /** Phone-based id. An ATTRIBUTE, and conditional: Meta omits it once the
+   * customer adopts a WhatsApp username. Never the join key. */
   wa_id?: string;
+  /** Optional WhatsApp username, if the customer has one. */
+  username?: string;
+  /** BSUID of the sender, when Meta supplies from_user_id. */
+  sender_id?: string;
   name?: string;
   direction?: "in" | "out";
   type?: string;
@@ -51,6 +63,10 @@ interface MetaMessage {
   id?: string;
   from?: string;
   to?: string;
+  /** BSUID of the sender (inbound) — Meta's forward-compatible identity. */
+  from_user_id?: string;
+  /** BSUID of the recipient, on echoes. */
+  to_user_id?: string;
   timestamp?: string;
   type?: string;
   text?: { body?: string };
@@ -118,7 +134,12 @@ export function normalizeWebhook(payload: unknown): WaEvent[] {
         | {
             metadata?: { display_phone_number?: string };
             messages?: MetaMessage[];
-            contacts?: Array<{ wa_id?: string; profile?: { name?: string } }>;
+            contacts?: Array<{
+              wa_id?: string;
+              user_id?: string;
+              username?: string;
+              profile?: { name?: string };
+            }>;
             message_echoes?: MetaMessage[];
             smb_message_echoes?: MetaMessage[];
             statuses?: Array<{ id?: string; status?: string }>;
@@ -131,19 +152,39 @@ export function normalizeWebhook(payload: unknown): WaEvent[] {
       // keyed by our own number.
       const businessNumber = (value.metadata?.display_phone_number ?? "").replace(/\D/g, "");
 
+      // Contacts are keyed by whichever identity the message will carry, so
+      // the lookup works before and after BSUID rollout.
       const names = new Map<string, string>();
+      const usernames = new Map<string, string>();
+      const phones = new Map<string, string>();
       for (const c of value.contacts ?? []) {
-        if (c?.wa_id && c?.profile?.name) names.set(c.wa_id, c.profile.name);
+        for (const key of [c?.user_id, c?.wa_id]) {
+          if (!key) continue;
+          if (c?.profile?.name) names.set(key, c.profile.name);
+          if (c?.username) usernames.set(key, c.username);
+          if (c?.wa_id) phones.set(key, c.wa_id);
+        }
       }
 
       for (const msg of value.messages ?? []) {
-        if (!msg?.id || !msg?.from) continue;
-        if (businessNumber && msg.from.replace(/\D/g, "") === businessNumber) continue;
+        // A message needs an id and at least one identity. `from` is
+        // conditional under BSUID, so it alone is no longer required.
+        const identity = msg?.from_user_id ?? msg?.from;
+        if (!msg?.id || !identity) continue;
+        if (
+          businessNumber &&
+          msg.from &&
+          msg.from.replace(/\D/g, "") === businessNumber
+        )
+          continue;
         events.push({
           kind: "message",
           id: msg.id,
-          wa_id: msg.from,
-          name: names.get(msg.from),
+          bsuid: msg.from_user_id,
+          wa_id: msg.from ?? phones.get(identity),
+          username: usernames.get(identity),
+          sender_id: msg.from_user_id,
+          name: names.get(identity),
           direction: "in",
           type: msg.type ?? "text",
           body: messageBody(msg),
@@ -155,11 +196,15 @@ export function normalizeWebhook(payload: unknown): WaEvent[] {
         ...(value.message_echoes ?? []),
         ...(value.smb_message_echoes ?? []),
       ]) {
-        if (!echo?.id || !echo?.to) continue;
+        // Echoes thread under the RECIPIENT — the customer.
+        const recipient = echo?.to_user_id ?? echo?.to;
+        if (!echo?.id || !recipient) continue;
         events.push({
           kind: "message",
           id: echo.id,
-          wa_id: echo.to,
+          bsuid: echo.to_user_id,
+          wa_id: echo.to ?? phones.get(recipient),
+          username: usernames.get(recipient),
           direction: "out",
           type: echo.type ?? "text",
           body: messageBody(echo),

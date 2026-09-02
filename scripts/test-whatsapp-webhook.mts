@@ -87,6 +87,82 @@ check("voice note", messageBody({ type: "audio" }) === "🎙 voice message");
 check("document filename", messageBody({ type: "document", document: { filename: "offer.pdf" } }) === "📄 offer.pdf");
 check("unknown type bracketed", messageBody({ type: "order" }) === "[order]");
 
+console.log("BSUID identity (Meta's forward-compatible key):");
+// Inbound from a customer who has adopted a WhatsApp username: Meta sends
+// user_id/from_user_id and OMITS the phone number entirely. A phone-keyed
+// store drops this message; a BSUID-keyed store threads it correctly.
+const bsuidOnly = {
+  entry: [{ changes: [{ value: {
+    metadata: { display_phone_number: "96170708585" },
+    contacts: [{ user_id: "CC.abc123xyz", username: "ali.hassan", profile: { name: "Ali Hassan" } }],
+    messages: [{
+      from_user_id: "CC.abc123xyz",
+      id: "wamid.bsuid.1",
+      timestamp: "1756640000",
+      type: "text",
+      text: { body: "Still available in green?" },
+    }],
+  } }] }],
+};
+const b1 = normalizeWebhook(bsuidOnly);
+check("message survives with no phone number", b1.length === 1);
+check("bsuid captured", b1[0].bsuid === "CC.abc123xyz");
+check("wa_id absent, not fabricated", b1[0].wa_id === undefined);
+check("username captured", b1[0].username === "ali.hassan");
+check("profile name resolved via BSUID", b1[0].name === "Ali Hassan");
+
+// Transitional: both identities present. BSUID must win as the key while the
+// phone is retained as an attribute.
+const both = {
+  entry: [{ changes: [{ value: {
+    metadata: { display_phone_number: "96170708585" },
+    contacts: [{ wa_id: "96171234567", user_id: "CC.dual", profile: { name: "Dual" } }],
+    messages: [{
+      from: "96171234567",
+      from_user_id: "CC.dual",
+      id: "wamid.dual.1",
+      timestamp: "1756640000",
+      type: "text",
+      text: { body: "hi" },
+    }],
+  } }] }],
+};
+const b2 = normalizeWebhook(both);
+check("bsuid preferred as identity", b2[0].bsuid === "CC.dual");
+check("phone retained as attribute", b2[0].wa_id === "96171234567");
+check("sender_id set from from_user_id", b2[0].sender_id === "CC.dual");
+
+// Echo of a business reply to a username-only customer.
+const bsuidEcho = {
+  entry: [{ changes: [{ value: {
+    metadata: { display_phone_number: "96170708585" },
+    contacts: [{ user_id: "CC.abc123xyz", username: "ali.hassan" }],
+    smb_message_echoes: [{
+      from: "96170708585",
+      to_user_id: "CC.abc123xyz",
+      id: "wamid.bsuid.echo",
+      timestamp: "1756640100",
+      type: "text",
+      text: { body: "Yes, Sage Green in stock." },
+    }],
+  } }] }],
+};
+const b3 = normalizeWebhook(bsuidEcho);
+check("echo threads under the customer's BSUID", b3.length === 1 && b3[0].bsuid === "CC.abc123xyz");
+check("echo direction out", b3[0].direction === "out");
+
+// Legacy phone-only traffic must keep working throughout the rollout.
+const legacy = {
+  entry: [{ changes: [{ value: {
+    metadata: { display_phone_number: "96170708585" },
+    contacts: [{ wa_id: "96179999999", profile: { name: "Legacy" } }],
+    messages: [{ from: "96179999999", id: "wamid.legacy.1", timestamp: "1756640000", type: "text", text: { body: "hello" } }],
+  } }] }],
+};
+const b4 = normalizeWebhook(legacy);
+check("phone-only still normalizes", b4.length === 1 && b4[0].wa_id === "96179999999");
+check("no bsuid invented when Meta sends none", b4[0].bsuid === undefined);
+
 console.log("business-number guard:");
 const selfMsg = {
   entry: [{ changes: [{ value: {
