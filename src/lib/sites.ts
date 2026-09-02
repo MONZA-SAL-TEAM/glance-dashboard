@@ -40,6 +40,7 @@ export const CANONICAL_MODELS = [
   "VOYAH Dream",
   "VOYAH Passion",
   "VOYAH Passion L",
+  "VOYAH Passion S",
   "VOYAH Courage",
   "VOYAH Taishan",
   "MHERO 1",
