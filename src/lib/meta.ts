@@ -596,6 +596,44 @@ async function facebookProfile(
 
   const token = await pageToken(id, cfg.label, cfg.token, notes);
 
+  // TEMPORARY probe — which Pages can this token see, and does any of them
+  // have an Instagram account linked? Remove once answered.
+  //
+  // @mherolebanon (3,175 followers) and @monzasal.official (1,364) exist but
+  // are invisible to Glance because no Instagram id is configured. Business
+  // Settings would show the ids, but it demands an SMS code that is Samer's
+  // to enter. This asks the token instead, which needs no 2FA.
+  //
+  // Worth doing because the earlier check looked at ONE Page, and the MHERO
+  // portfolio has two — the Instagram may simply be linked to the other one.
+  const acctNotes: string[] = [];
+  const accts = await attempt(`${cfg.label} · FB accounts`, acctNotes, () =>
+    graph<{
+      data: Array<{
+        id: string;
+        name?: string;
+        instagram_business_account?: { id?: string; username?: string };
+      }>;
+    }>(
+      "me/accounts",
+      { fields: "id,name,instagram_business_account{id,username}" },
+      cfg.token,
+    ),
+  );
+  if (accts) {
+    const lines = (accts.data ?? []).map((pg) => {
+      const ig = pg.instagram_business_account;
+      return `${pg.name ?? "?"} (${pg.id})${
+        ig?.id ? ` -> IG @${ig.username ?? "?"} id=${ig.id}` : " -> no IG linked"
+      }`;
+    });
+    notes.push(
+      `${cfg.label} · FB pages visible to this token — ${
+        lines.join(" | ") || "none"
+      }`,
+    );
+  }
+
   // Facebook Page insights require read_insights. Without it Meta ACCEPTS
   // every valid metric name and answers with an EMPTY data array rather than
   // an error — which is exactly why this read as "Meta retired the Page
