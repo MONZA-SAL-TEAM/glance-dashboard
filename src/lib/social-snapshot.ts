@@ -543,8 +543,22 @@ async function instagramSnapshot(
   // landed covers every way of arriving empty, including ones Meta has not
   // invented yet.
   if (online && out.audience.length === beforeOnline) {
+    // Say HOW it was empty, not just that it was. Two very different causes
+    // produce an identical empty result, and the counts separate them:
+    // no buckets at all means Meta served nothing (it is absent from the
+    // supported-metrics table), whereas buckets that are mostly non-empty
+    // would mean the metric works and the line above reads the wrong one —
+    // it takes the LAST day, which is today and therefore still empty.
+    const values = online.data?.[0]?.values ?? [];
+    const filled = values.filter(
+      (v) =>
+        v.value &&
+        typeof v.value === "object" &&
+        Object.keys(v.value).length > 0,
+    ).length;
     out.notes.push(
-      `${cfg.label} · IG online followers — returned no hourly data`,
+      `${cfg.label} · IG online followers — no rows stored ` +
+        `(${values.length} day buckets, ${filled} with data)`,
     );
   }
 }
