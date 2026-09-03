@@ -462,7 +462,24 @@ function pageToken(
       { fields: "access_token" },
       userToken,
     ),
-  ).then((res) => res?.access_token ?? null);
+  ).then((res) => {
+    // A SUCCESSFUL call that carries no token is the same silent shape that
+    // hid the online_followers bug: attempt() records only throws, so this
+    // would return null without a word. Page insights then fall back to the
+    // system-user token and answer (#100) "must be a valid insights metric",
+    // which reads as a retired metric name when the real problem is the
+    // credential. Meta still documents most of those names as valid, so that
+    // misreading is easy to make. Never log the token itself — only whether
+    // one came back.
+    if (res && !res.access_token) {
+      notes.push(
+        `${label} · FB page token — request succeeded but returned no ` +
+          `access_token; Page insights fall back to the user token and may ` +
+          `report (#100)`,
+      );
+    }
+    return res?.access_token ?? null;
+  });
   pageTokens.set(key, pending);
   return pending;
 }
