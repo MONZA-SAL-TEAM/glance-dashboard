@@ -638,6 +638,46 @@ async function facebookProfile(
   //
   // Reported only when actually missing, so the note names the fix instead of
   // leaving four cryptic errors to interpret.
+  // TEMPORARY probe — can this token see its portfolio's Instagram assets?
+  //
+  // The Instagram account is linked to the Page but invisible to the Graph
+  // API, which normally means it is not assigned to this system user. That
+  // assignment lives behind Business Settings, which demands an SMS code.
+  //
+  // business_management is granted, though, so the portfolio can be asked
+  // directly. If the account id comes back AND the token can read it, the
+  // brand can be configured with no Meta change at all — which would make
+  // the 2FA wall irrelevant rather than merely diagnosed.
+  const bizNotes: string[] = [];
+  const bizes = await attempt(`${cfg.label} · businesses`, bizNotes, () =>
+    graph<{ data: Array<{ id: string; name?: string }> }>(
+      "me/businesses",
+      { fields: "id,name" },
+      cfg.token,
+    ),
+  );
+  for (const biz of bizes?.data ?? []) {
+    for (const edge of ["owned_instagram_accounts", "client_instagram_accounts"]) {
+      const igs = await attempt(`${cfg.label} · ${edge}`, bizNotes, () =>
+        graph<{ data: Array<{ id: string; username?: string }> }>(
+          `${biz.id}/${edge}`,
+          { fields: "id,username" },
+          cfg.token,
+        ),
+      );
+      if (igs?.data?.length) {
+        notes.push(
+          `${cfg.label} · ${biz.name ?? biz.id} ${edge} — ${igs.data
+            .map((a) => `@${a.username ?? "?"} id=${a.id}`)
+            .join(", ")}`,
+        );
+      }
+    }
+  }
+  if (bizNotes.length) {
+    notes.push(`${cfg.label} · business asset lookup — ${bizNotes.join(" · ")}`);
+  }
+
   const missing = await missingPagePermissions(cfg.token);
   const canReadInsights = !missing.includes("read_insights");
   if (missing.length) {
