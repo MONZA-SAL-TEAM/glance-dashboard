@@ -514,7 +514,11 @@ async function instagramSnapshot(
   const online = await attempt(`${cfg.label} · IG online followers`, out.notes, () =>
     graph<{ data: InsightEntry[] }>(
       `${id}/insights`,
-      { metric: "online_followers", period: "lifetime" },
+      // Explicit window. Without dates Meta answers with just two days, and
+      // both came back empty — which does not distinguish "the metric is
+      // dead" from "the default window happens to be unpopulated". The docs
+      // put the availability at the last 30 days, so ask for that.
+      { metric: "online_followers", period: "lifetime", since, until },
       cfg.token,
     ),
   );
