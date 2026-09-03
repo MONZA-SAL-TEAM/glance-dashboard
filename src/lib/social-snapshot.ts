@@ -522,13 +522,32 @@ async function instagramSnapshot(
       cfg.token,
     ),
   );
-  const hourly = online?.data?.[0]?.values?.[online.data[0].values!.length - 1];
   const beforeOnline = out.audience.length;
-  if (hourly && typeof hourly.value === "object") {
-    for (const [hour, value] of Object.entries(hourly.value)) {
+  // EVERY populated day, each stored under the day it describes.
+  //
+  // This previously read only values[length - 1]. That is the most recent
+  // bucket, which is today and therefore always still empty, so nothing was
+  // ever stored — and because the request also carried no date range, Meta
+  // returned just two buckets and the emptiness looked like a dead metric.
+  // With the documented 30-day window it answers with 28 populated days, all
+  // of which were being discarded on every run.
+  for (const bucket of online?.data?.[0]?.values ?? []) {
+    if (!bucket.value || typeof bucket.value !== "object") continue;
+    const hours = Object.entries(bucket.value);
+    if (!hours.length) continue;
+    // Same convention as seriesByDay: end_time is the START of the following
+    // day, so a bucket describes the day before its label. A bucket without a
+    // usable date is SKIPPED rather than filed under today — the primary key
+    // is (profile_key, day, dimension, label), so guessing the day would make
+    // several days overwrite each other.
+    if (!bucket.end_time) continue;
+    const end = new Date(bucket.end_time);
+    if (Number.isNaN(end.getTime())) continue;
+    const day = format(subDays(end, 1), "yyyy-MM-dd");
+    for (const [hour, value] of hours) {
       out.audience.push({
         profile_key: key,
-        day: today,
+        day,
         brand: cfg.brand,
         dimension: "online_hour",
         label: hour,
