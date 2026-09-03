@@ -506,6 +506,10 @@ async function facebookMetric(
   notes: string[],
 ): Promise<InsightEntry | undefined> {
   const quiet: string[] = [];
+  // Why each candidate did not answer, kept per metric. Reporting only the
+  // LAST one — as this did — means three candidates can fail for reasons
+  // nobody ever sees, and the group looks uniformly retired when it is not.
+  const problems: string[] = [];
   for (const metric of candidates) {
     const res = await attempt(`${label} · FB ${metric}`, quiet, () =>
       graph<{ data: InsightEntry[] }>(
@@ -514,16 +518,27 @@ async function facebookMetric(
         token ?? undefined,
       ),
     );
-    const entry = res?.data?.[0];
+    if (!res) {
+      const raw = quiet[quiet.length - 1] ?? "";
+      problems.push(`${metric}: ${raw.split(" — ").slice(1).join(" — ") || "failed"}`);
+      continue;
+    }
+    const entry = res.data?.[0];
     if (entry) return entry;
+    // A SUCCESSFUL call carrying an empty data array is not a retired metric,
+    // but it was being reported as one. Same shape that hid online_followers.
+    problems.push(`${metric}: request succeeded but returned no data`);
   }
-  // Every candidate failed: report the measure once, not each attempt.
-  notes.push(
-    `${label} · FB ${candidates.join(" / ")} — ${
-      quiet[quiet.length - 1]?.split(" — ").slice(1).join(" — ") ||
-      "no metric in this group is currently valid"
-    }`,
-  );
+  // One line when every candidate failed the same way; per-metric detail the
+  // moment they diverge, since the divergence is the useful part.
+  const distinct = [
+    ...new Set(problems.map((p) => p.split(": ").slice(1).join(": "))),
+  ];
+  const detail =
+    distinct.length === 1
+      ? distinct[0]
+      : problems.join(" · ") || "no metric in this group is currently valid";
+  notes.push(`${label} · FB ${candidates.join(" / ")} — ${detail}`);
   return undefined;
 }
 
