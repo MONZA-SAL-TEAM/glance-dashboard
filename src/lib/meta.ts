@@ -560,40 +560,42 @@ async function facebookProfile(
 
   const token = await pageToken(id, cfg.label, cfg.token, notes);
 
-  // TEMPORARY controlled probe, step 2 — ONE metric, varying only the window.
-  // metric_type=total_value was tested and RULED OUT: accepted, entries=0.
-  // Remove this block once answered.
+  // TEMPORARY probe, step 3 — what is this token actually granted?
   //
-  // Note what "entries=0" means: Meta returned no metric object at all. A
-  // valid metric on a quiet Page normally returns the object with zero
-  // values, so an empty data array points at the metric not being served for
-  // this Page rather than at an absence of activity — but that is a
-  // hypothesis, and this varies the window to test it rather than assume it.
-  const probes: Array<[string, Record<string, string>]> = [
-    ["period=day (baseline)", { period: "day", since, until }],
-    ["period=week", { period: "week", since, until }],
-    ["period=days_28", { period: "days_28", since, until }],
-    ["period=day, no window", { period: "day" }],
-    ["no period, no window", {}],
-  ];
-  for (const [name, params] of probes) {
-    const probeNotes: string[] = [];
-    const probe = await attempt(`${cfg.label} · FB probe`, probeNotes, () =>
-      graph<{ data: InsightEntry[] }>(
-        `${id}/insights`,
-        { metric: "page_post_engagements", ...params },
-        token ?? undefined,
-      ),
-    );
+  // Ruled out so far, each accepted and each returning entries=0:
+  // metric_type=total_value, and period day / week / days_28 / none, with
+  // and without a window. With NO parameters at all Meta still returns no
+  // metric object, which is not how "no activity in the window" behaves —
+  // that returns the object carrying zeros.
+  //
+  // The FB posts call already fails with (#10) pages_read_user_content, so
+  // this token is demonstrably missing Page permissions. Page insights can
+  // answer empty rather than erroring when read_insights is absent, which
+  // would explain every observation. Permission NAMES are not secrets; the
+  // token is never logged.
+  const permNotes: string[] = [];
+  const perms = await attempt(`${cfg.label} · FB permissions`, permNotes, () =>
+    graph<{ data: Array<{ permission: string; status: string }> }>(
+      "me/permissions",
+      {},
+      cfg.token,
+    ),
+  );
+  if (perms) {
+    const granted = (perms.data ?? [])
+      .filter((x) => x.status === "granted")
+      .map((x) => x.permission)
+      .sort();
+    const wanted = [
+      "read_insights",
+      "pages_read_engagement",
+      "pages_show_list",
+      "pages_read_user_content",
+    ];
+    const missing = wanted.filter((w) => !granted.includes(w));
     notes.push(
-      `${cfg.label} · FB probe page_post_engagements ${name} — ${
-        probe
-          ? `accepted; entries=${probe.data?.length ?? 0}` +
-            (probe.data?.[0]
-              ? `, values=${probe.data[0].values?.length ?? 0}`
-              : "")
-          : probeNotes[0]?.split(" — ").slice(1).join(" — ") || "failed"
-      }`,
+      `${cfg.label} · FB token grants — ${granted.join(", ") || "none"} ` +
+        `|| MISSING: ${missing.join(", ") || "none of the four checked"}`,
     );
   }
 
