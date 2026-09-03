@@ -129,6 +129,23 @@ deliberate decision.
 - If the API version in `META_API_VERSION` has been sunset, Meta's own error
   text is surfaced in that same list — usually a one-line fix.
 
+## A documentation inconsistency worth knowing
+
+**`online_followers` works, despite what Meta's reference implies.** It is
+absent from the supported-metrics table for the Instagram user insights
+endpoint, yet the same page still describes it under Limitations, and no
+changelog entry records its removal. Absence from that table is not proof of
+deprecation.
+
+It is easy to conclude the metric is dead, because it fails in a way that
+looks exactly like deprecation: **requested without `since`/`until`, Meta
+returns only two day buckets — today and yesterday — and today is never
+populated.** A successful call then yields an empty object. Asked for the
+documented 30-day window, the same account returns 28 populated days.
+
+If "when followers are online" is ever empty again, check the request window
+and which bucket is being read before concluding Meta withdrew the metric.
+
 ## Genuinely not possible
 
 - **Follower lists** — Meta never exposes who follows an account.
