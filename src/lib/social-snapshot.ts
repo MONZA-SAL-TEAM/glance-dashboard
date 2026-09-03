@@ -514,10 +514,18 @@ async function instagramSnapshot(
   const online = await attempt(`${cfg.label} · IG online followers`, out.notes, () =>
     graph<{ data: InsightEntry[] }>(
       `${id}/insights`,
-      // Explicit window. Without dates Meta answers with just two days, and
-      // both came back empty — which does not distinguish "the metric is
-      // dead" from "the default window happens to be unpopulated". The docs
-      // put the availability at the last 30 days, so ask for that.
+      // `online_followers` is CONFIRMED WORKING against the live API. Two
+      // things make it look otherwise, and both have misled a reader already:
+      //
+      //  1. Meta's supported-metrics table for this endpoint no longer lists
+      //     it, although the same page still describes it under Limitations
+      //     and no changelog records its removal. That omission is NOT
+      //     deprecation — do not take it as proof and delete this call.
+      //  2. Without since/until Meta answers with only two day buckets, today
+      //     and yesterday, and today is never populated.
+      //
+      // Documented availability is the last 30 days, so ask for that window:
+      // the account then returns 28 populated days.
       { metric: "online_followers", period: "lifetime", since, until },
       cfg.token,
     ),
@@ -525,12 +533,15 @@ async function instagramSnapshot(
   const beforeOnline = out.audience.length;
   // EVERY populated day, each stored under the day it describes.
   //
-  // This previously read only values[length - 1]. That is the most recent
-  // bucket, which is today and therefore always still empty, so nothing was
-  // ever stored — and because the request also carried no date range, Meta
-  // returned just two buckets and the emptiness looked like a dead metric.
-  // With the documented 30-day window it answers with 28 populated days, all
-  // of which were being discarded on every run.
+  // The metric appearing dead was TWO application-side defects, not a Meta
+  // fault, and each one hid the other:
+  //   * the request above carried no time window, so only two buckets came
+  //     back — today and yesterday; and
+  //   * this loop read values[length - 1], the NEWEST bucket, which is today
+  //     and therefore still empty.
+  // The result was a successful call returning {}. Correcting either defect
+  // alone would have left the metric looking equally dead, which is why the
+  // first diagnosis concluded Meta had retired it.
   for (const bucket of online?.data?.[0]?.values ?? []) {
     if (!bucket.value || typeof bucket.value !== "object") continue;
     const hours = Object.entries(bucket.value);
