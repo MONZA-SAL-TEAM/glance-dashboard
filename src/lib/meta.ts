@@ -639,17 +639,22 @@ async function facebookProfile(
   // Reported only when actually missing, so the note names the fix instead of
   // leaving four cryptic errors to interpret.
   const missing = await missingPagePermissions(cfg.token);
+  const canReadInsights = !missing.includes("read_insights");
   if (missing.length) {
     notes.push(
-      `${cfg.label} · FB permissions — this token is missing ${missing.join(
-        " and ",
-      )}. Facebook Page insights return no data without read_insights (Meta ` +
-        `accepts the metric names and answers empty), and posts need ` +
-        `pages_read_user_content. Instagram is unaffected.`,
+      `${cfg.label} · Facebook needs ${missing.join(" and ")} on this token. ` +
+        `Without read_insights Meta accepts every valid metric name and ` +
+        `answers empty rather than erroring, so reach and engagement cannot ` +
+        `be read at all; posts need pages_read_user_content. Instagram is ` +
+        `unaffected and is where this audience is.`,
     );
   }
 
-  const [reachEntry, engagedEntry] = await Promise.all([
+  // Skipped entirely without read_insights: the calls cannot succeed, and
+  // making them turns one actionable line into several confusing ones.
+  const [reachEntry, engagedEntry] = !canReadInsights
+    ? [undefined, undefined]
+    : await Promise.all([
     facebookMetric(
       id,
       // Meta retired the whole page_impressions family and renamed the
@@ -657,12 +662,10 @@ async function facebookProfile(
       // page_total_media_view_unique, page_impressions -> page_media_view
       // (deprecations completing through 2026). The retired names stay at
       // the end of the list so an older API version still answers.
-      [
-        "page_total_media_view_unique",
-        "page_media_view",
-        "page_impressions_unique",
-        "page_impressions",
-      ],
+      // page_impressions and page_impressions_unique were dropped: both are
+      // asterisked as deprecated in Meta's reference and both answer (#100)
+      // on every Page here. Keeping dead names only adds noise to the notes.
+      ["page_total_media_view_unique", "page_media_view"],
       cfg.label,
       since,
       until,
@@ -674,7 +677,9 @@ async function facebookProfile(
       // Meta published no direct replacement for the engagement metrics, so
       // this is a best-effort list; when every candidate fails the panel
       // says so in its notes rather than showing a confident zero.
-      ["page_post_engagements", "page_content_activity", "page_total_actions"],
+      // page_content_activity dropped: it is not a metric at all — absent from
+      // Meta's reference and (#100) on every Page.
+      ["page_post_engagements", "page_total_actions"],
       cfg.label,
       since,
       until,
@@ -839,11 +844,19 @@ export async function fetchSocial(
       if (found) {
         cfg = { ...cfg, igUserId: found };
       } else {
+        // Careful with the wording: "not linked" would be wrong and would
+        // send someone to fix the wrong thing. @mherolebanon IS linked to its
+        // Page — Business Suite shows it with 3.2K followers — and the Graph
+        // API still returns no instagram_business_account, because being
+        // linked in Business Suite is not the same as being assigned to the
+        // system user whose token this is.
         notes.push(
-          `${cfg.label} · no Instagram account is linked to this Facebook ` +
-            `Page, so only Facebook is shown. Linking one in Meta makes the ` +
-            `Instagram side appear here automatically — no configuration ` +
-            `change needed.`,
+          `${cfg.label} · no Instagram account is visible to this token, so ` +
+            `only Facebook is shown. Linking the account to the Page in ` +
+            `Business Suite is not sufficient on its own — it must also be ` +
+            `assigned to the system user whose token Glance uses, with ` +
+            `instagram_basic. Once it is, Instagram appears here ` +
+            `automatically, with no configuration change.`,
         );
       }
     }
