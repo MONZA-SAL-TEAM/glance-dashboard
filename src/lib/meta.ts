@@ -638,52 +638,6 @@ async function facebookProfile(
   //
   // Reported only when actually missing, so the note names the fix instead of
   // leaving four cryptic errors to interpret.
-  // TEMPORARY probe, take 2 — reach the portfolio through the PAGE.
-  //
-  // me/businesses came back with nothing and said nothing, which is the same
-  // successful-but-empty shape that has misled three times today. So this
-  // asks the Page which business owns it, then asks that business for its
-  // Instagram accounts, and REPORTS every outcome including empty.
-  const bizNotes: string[] = [];
-  const owner = await attempt(`${cfg.label} · page business`, bizNotes, () =>
-    graph<{ business?: { id?: string; name?: string } }>(
-      id,
-      { fields: "business" },
-      cfg.token,
-    ),
-  );
-  const bizId = owner?.business?.id;
-  if (!bizId) {
-    bizNotes.push("page reports no owning business");
-  } else {
-    for (const edge of [
-      "owned_instagram_accounts",
-      "client_instagram_accounts",
-      "instagram_accounts",
-    ]) {
-      const igs = await attempt(`${cfg.label} · ${edge}`, bizNotes, () =>
-        graph<{ data: Array<{ id: string; username?: string }> }>(
-          `${bizId}/${edge}`,
-          { fields: "id,username" },
-          cfg.token,
-        ),
-      );
-      if (!igs) continue;
-      bizNotes.push(
-        igs.data?.length
-          ? `${edge}: ${igs.data
-              .map((a) => `@${a.username ?? "?"} id=${a.id}`)
-              .join(", ")}`
-          : `${edge}: accepted, empty`,
-      );
-    }
-  }
-  notes.push(
-    `${cfg.label} · portfolio lookup (biz=${
-      owner?.business?.name ?? bizId ?? "none"
-    }) — ${bizNotes.join(" · ") || "nothing reported"}`,
-  );
-
   const missing = await missingPagePermissions(cfg.token);
   const canReadInsights = !missing.includes("read_insights");
   if (missing.length) {
@@ -890,19 +844,23 @@ export async function fetchSocial(
       if (found) {
         cfg = { ...cfg, igUserId: found };
       } else {
-        // Careful with the wording: "not linked" would be wrong and would
-        // send someone to fix the wrong thing. @mherolebanon IS linked to its
-        // Page — Business Suite shows it with 3.2K followers — and the Graph
-        // API still returns no instagram_business_account, because being
-        // linked in Business Suite is not the same as being assigned to the
-        // system user whose token this is.
+        // Established by comparing the two portfolios directly: the working
+        // brand's business returns its account from owned_instagram_accounts,
+        // and the failing one returns nothing. The account was linked to the
+        // Page all along — Business Suite showed it — but a portfolio that
+        // does not OWN an Instagram account cannot expose it to any token,
+        // whatever that token is permitted to do. Two earlier readings of
+        // this ("not linked", then "not assigned") were both wrong, so the
+        // wording names the actual precondition and its order.
         notes.push(
           `${cfg.label} · no Instagram account is visible to this token, so ` +
-            `only Facebook is shown. Linking the account to the Page in ` +
-            `Business Suite is not sufficient on its own — it must also be ` +
-            `assigned to the system user whose token Glance uses, with ` +
-            `instagram_basic. Once it is, Instagram appears here ` +
-            `automatically, with no configuration change.`,
+            `only Facebook is shown. Being linked to the Page in Business ` +
+            `Suite is not enough on its own: the Instagram account must be ` +
+            `added to the business portfolio as an asset, and then assigned ` +
+            `to the system user whose token Glance uses. A portfolio that ` +
+            `owns no Instagram account cannot expose one to any token, ` +
+            `however it is permissioned. Once added and assigned, Instagram ` +
+            `appears here automatically, with no configuration change.`,
         );
       }
     }
