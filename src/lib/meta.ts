@@ -485,6 +485,42 @@ function pageToken(
 }
 
 /**
+ * Which Facebook-related permissions this token lacks, cached per token.
+ *
+ * Worth checking because the symptom is silent: Page insights without
+ * read_insights are ACCEPTED and answer with an empty data array, so the
+ * failure is indistinguishable from a retired metric unless you ask.
+ * Permission names are not secrets; the token is never logged.
+ */
+const permissionCache = new Map<string, Promise<string[]>>();
+
+function missingPagePermissions(token: string): Promise<string[]> {
+  const key = token.slice(-12);
+  const cached = permissionCache.get(key);
+  if (cached) return cached;
+  const wanted = ["read_insights", "pages_read_user_content"];
+  const pending = attempt<{
+    data: Array<{ permission: string; status: string }>;
+  }>("meta permissions", [], () =>
+    graph<{ data: Array<{ permission: string; status: string }> }>(
+      "me/permissions",
+      {},
+      token,
+    ),
+  ).then((res) => {
+    // Unknown is not the same as missing: if the check itself fails, claim
+    // nothing rather than blame a permission that may well be granted.
+    if (!res?.data) return [];
+    const granted = new Set(
+      res.data.filter((x) => x.status === "granted").map((x) => x.permission),
+    );
+    return wanted.filter((w) => !granted.has(w));
+  });
+  permissionCache.set(key, pending);
+  return pending;
+}
+
+/**
  * Page metrics are retired on Meta's schedule and a single dead name fails
  * the whole request with (#100) "must be a valid insights metric" — which is
  * how reach and engagement both read zero because of one bad third metric.
@@ -560,42 +596,22 @@ async function facebookProfile(
 
   const token = await pageToken(id, cfg.label, cfg.token, notes);
 
-  // TEMPORARY probe, step 3 — what is this token actually granted?
+  // Facebook Page insights require read_insights. Without it Meta ACCEPTS
+  // every valid metric name and answers with an EMPTY data array rather than
+  // an error — which is exactly why this read as "Meta retired the Page
+  // metrics" for so long. Verified on both brands: instagram_manage_insights
+  // is granted, so Instagram works, while read_insights is not.
   //
-  // Ruled out so far, each accepted and each returning entries=0:
-  // metric_type=total_value, and period day / week / days_28 / none, with
-  // and without a window. With NO parameters at all Meta still returns no
-  // metric object, which is not how "no activity in the window" behaves —
-  // that returns the object carrying zeros.
-  //
-  // The FB posts call already fails with (#10) pages_read_user_content, so
-  // this token is demonstrably missing Page permissions. Page insights can
-  // answer empty rather than erroring when read_insights is absent, which
-  // would explain every observation. Permission NAMES are not secrets; the
-  // token is never logged.
-  const permNotes: string[] = [];
-  const perms = await attempt(`${cfg.label} · FB permissions`, permNotes, () =>
-    graph<{ data: Array<{ permission: string; status: string }> }>(
-      "me/permissions",
-      {},
-      cfg.token,
-    ),
-  );
-  if (perms) {
-    const granted = (perms.data ?? [])
-      .filter((x) => x.status === "granted")
-      .map((x) => x.permission)
-      .sort();
-    const wanted = [
-      "read_insights",
-      "pages_read_engagement",
-      "pages_show_list",
-      "pages_read_user_content",
-    ];
-    const missing = wanted.filter((w) => !granted.includes(w));
+  // Reported only when actually missing, so the note names the fix instead of
+  // leaving four cryptic errors to interpret.
+  const missing = await missingPagePermissions(cfg.token);
+  if (missing.length) {
     notes.push(
-      `${cfg.label} · FB token grants — ${granted.join(", ") || "none"} ` +
-        `|| MISSING: ${missing.join(", ") || "none of the four checked"}`,
+      `${cfg.label} · FB permissions — this token is missing ${missing.join(
+        " and ",
+      )}. Facebook Page insights return no data without read_insights (Meta ` +
+        `accepts the metric names and answers empty), and posts need ` +
+        `pages_read_user_content. Instagram is unaffected.`,
     );
   }
 
