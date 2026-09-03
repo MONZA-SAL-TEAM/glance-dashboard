@@ -492,6 +492,40 @@ function pageToken(
  * failure is indistinguishable from a retired metric unless you ask.
  * Permission names are not secrets; the token is never logged.
  */
+const igDiscoveryCache = new Map<string, Promise<string | undefined>>();
+
+/**
+ * The Instagram account linked to a Page, looked up rather than configured.
+ *
+ * A brand whose config carries a page_id but no ig_user_id would otherwise
+ * show Facebook alone — which is why MHERO read as "238 followers" while
+ * @mherolebanon actually has over three thousand. Requiring the id to be
+ * pasted into an environment variable makes linking an account a two-step
+ * job, and the second step is the one that gets forgotten.
+ *
+ * Discovering it means the moment an account is linked to its Page in Meta,
+ * the brand's Instagram appears on the next load with no config change.
+ * Returns undefined when nothing is linked; the caller says so.
+ */
+function discoverIgUserId(
+  pageId: string,
+  token: string,
+  notes: string[],
+): Promise<string | undefined> {
+  const key = `${pageId}:${token.slice(-12)}`;
+  const cached = igDiscoveryCache.get(key);
+  if (cached) return cached;
+  const pending = attempt(`page ${pageId} · IG link`, notes, () =>
+    graph<{ instagram_business_account?: { id?: string; username?: string } }>(
+      pageId,
+      { fields: "instagram_business_account{id,username}" },
+      token,
+    ),
+  ).then((res) => res?.instagram_business_account?.id);
+  igDiscoveryCache.set(key, pending);
+  return pending;
+}
+
 const permissionCache = new Map<string, Promise<string[]>>();
 
 function missingPagePermissions(token: string): Promise<string[]> {
@@ -595,44 +629,6 @@ async function facebookProfile(
   );
 
   const token = await pageToken(id, cfg.label, cfg.token, notes);
-
-  // TEMPORARY probe — which Pages can this token see, and does any of them
-  // have an Instagram account linked? Remove once answered.
-  //
-  // @mherolebanon (3,175 followers) and @monzasal.official (1,364) exist but
-  // are invisible to Glance because no Instagram id is configured. Business
-  // Settings would show the ids, but it demands an SMS code that is Samer's
-  // to enter. This asks the token instead, which needs no 2FA.
-  //
-  // Worth doing because the earlier check looked at ONE Page, and the MHERO
-  // portfolio has two — the Instagram may simply be linked to the other one.
-  const acctNotes: string[] = [];
-  const accts = await attempt(`${cfg.label} · FB accounts`, acctNotes, () =>
-    graph<{
-      data: Array<{
-        id: string;
-        name?: string;
-        instagram_business_account?: { id?: string; username?: string };
-      }>;
-    }>(
-      "me/accounts",
-      { fields: "id,name,instagram_business_account{id,username}" },
-      cfg.token,
-    ),
-  );
-  if (accts) {
-    const lines = (accts.data ?? []).map((pg) => {
-      const ig = pg.instagram_business_account;
-      return `${pg.name ?? "?"} (${pg.id})${
-        ig?.id ? ` -> IG @${ig.username ?? "?"} id=${ig.id}` : " -> no IG linked"
-      }`;
-    });
-    notes.push(
-      `${cfg.label} · FB pages visible to this token — ${
-        lines.join(" | ") || "none"
-      }`,
-    );
-  }
 
   // Facebook Page insights require read_insights. Without it Meta ACCEPTS
   // every valid metric name and answers with an EMPTY data array rather than
@@ -835,7 +831,22 @@ export async function fetchSocial(
   const allPosts: SocialPost[] = [];
   let audience = emptyAudience;
 
-  for (const cfg of profiles) {
+  for (const rawCfg of profiles) {
+    // An explicitly configured id always wins; discovery only fills a gap.
+    let cfg = rawCfg;
+    if (!cfg.igUserId && cfg.pageId) {
+      const found = await discoverIgUserId(cfg.pageId, cfg.token, notes);
+      if (found) {
+        cfg = { ...cfg, igUserId: found };
+      } else {
+        notes.push(
+          `${cfg.label} · no Instagram account is linked to this Facebook ` +
+            `Page, so only Facebook is shown. Linking one in Meta makes the ` +
+            `Instagram side appear here automatically — no configuration ` +
+            `change needed.`,
+        );
+      }
+    }
     if (cfg.igUserId) {
       built.push(await instagramProfile(cfg, since, until, notes));
       allPosts.push(
