@@ -560,41 +560,42 @@ async function facebookProfile(
 
   const token = await pageToken(id, cfg.label, cfg.token, notes);
 
-  // TEMPORARY controlled probe — ONE metric, ONE variable. Remove once
-  // answered; it exists to decide a question, not to collect a number.
+  // TEMPORARY controlled probe, step 2 — ONE metric, varying only the window.
+  // metric_type=total_value was tested and RULED OUT: accepted, entries=0.
+  // Remove this block once answered.
   //
-  // page_post_engagements is ACCEPTED by Meta (HTTP 200) on both brands and
-  // returns an empty data array. Everything below is byte-identical to the
-  // real request except for adding metric_type=total_value, which
-  // follower_demographics already requires elsewhere in this file. If the
-  // parameter is what is missing, this answers with a value; if the
-  // combination is invalid, Meta says so, and that is informative too.
-  const probeNotes: string[] = [];
-  const probe = await attempt(`${cfg.label} · FB probe`, probeNotes, () =>
-    graph<{ data: InsightEntry[] }>(
-      `${id}/insights`,
-      {
-        metric: "page_post_engagements",
-        period: "day",
-        metric_type: "total_value",
-        since,
-        until,
-      },
-      token ?? undefined,
-    ),
-  );
-  notes.push(
-    `${cfg.label} · FB probe page_post_engagements +metric_type=total_value — ${
-      probe
-        ? `accepted; entries=${probe.data?.length ?? 0}` +
-          (probe.data?.[0]
-            ? `, total_value=${JSON.stringify(
-                probe.data[0].total_value ?? null,
-              )}, values=${probe.data[0].values?.length ?? 0}`
-            : "")
-        : probeNotes[0]?.split(" — ").slice(1).join(" — ") || "failed"
-    }`,
-  );
+  // Note what "entries=0" means: Meta returned no metric object at all. A
+  // valid metric on a quiet Page normally returns the object with zero
+  // values, so an empty data array points at the metric not being served for
+  // this Page rather than at an absence of activity — but that is a
+  // hypothesis, and this varies the window to test it rather than assume it.
+  const probes: Array<[string, Record<string, string>]> = [
+    ["period=day (baseline)", { period: "day", since, until }],
+    ["period=week", { period: "week", since, until }],
+    ["period=days_28", { period: "days_28", since, until }],
+    ["period=day, no window", { period: "day" }],
+    ["no period, no window", {}],
+  ];
+  for (const [name, params] of probes) {
+    const probeNotes: string[] = [];
+    const probe = await attempt(`${cfg.label} · FB probe`, probeNotes, () =>
+      graph<{ data: InsightEntry[] }>(
+        `${id}/insights`,
+        { metric: "page_post_engagements", ...params },
+        token ?? undefined,
+      ),
+    );
+    notes.push(
+      `${cfg.label} · FB probe page_post_engagements ${name} — ${
+        probe
+          ? `accepted; entries=${probe.data?.length ?? 0}` +
+            (probe.data?.[0]
+              ? `, values=${probe.data[0].values?.length ?? 0}`
+              : "")
+          : probeNotes[0]?.split(" — ").slice(1).join(" — ") || "failed"
+      }`,
+    );
+  }
 
   const [reachEntry, engagedEntry] = await Promise.all([
     facebookMetric(
