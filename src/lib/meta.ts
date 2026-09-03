@@ -559,6 +559,43 @@ async function facebookProfile(
   );
 
   const token = await pageToken(id, cfg.label, cfg.token, notes);
+
+  // TEMPORARY controlled probe — ONE metric, ONE variable. Remove once
+  // answered; it exists to decide a question, not to collect a number.
+  //
+  // page_post_engagements is ACCEPTED by Meta (HTTP 200) on both brands and
+  // returns an empty data array. Everything below is byte-identical to the
+  // real request except for adding metric_type=total_value, which
+  // follower_demographics already requires elsewhere in this file. If the
+  // parameter is what is missing, this answers with a value; if the
+  // combination is invalid, Meta says so, and that is informative too.
+  const probeNotes: string[] = [];
+  const probe = await attempt(`${cfg.label} · FB probe`, probeNotes, () =>
+    graph<{ data: InsightEntry[] }>(
+      `${id}/insights`,
+      {
+        metric: "page_post_engagements",
+        period: "day",
+        metric_type: "total_value",
+        since,
+        until,
+      },
+      token ?? undefined,
+    ),
+  );
+  notes.push(
+    `${cfg.label} · FB probe page_post_engagements +metric_type=total_value — ${
+      probe
+        ? `accepted; entries=${probe.data?.length ?? 0}` +
+          (probe.data?.[0]
+            ? `, total_value=${JSON.stringify(
+                probe.data[0].total_value ?? null,
+              )}, values=${probe.data[0].values?.length ?? 0}`
+            : "")
+        : probeNotes[0]?.split(" — ").slice(1).join(" — ") || "failed"
+    }`,
+  );
+
   const [reachEntry, engagedEntry] = await Promise.all([
     facebookMetric(
       id,
