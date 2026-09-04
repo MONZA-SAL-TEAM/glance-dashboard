@@ -35,9 +35,16 @@ export function listeningConfig() {
 }
 
 /**
- * Comment text on recent posts. Requires `instagram_manage_comments`.
- * Only comments on your own media — never DMs, which are private
- * conversations and deliberately out of scope.
+ * NOT CALLED from meta.ts. Kept for reference, not dead by accident.
+ *
+ * Comment text on recent posts. Failed with (#200) "provide valid app ID"
+ * on every token tried, including one that carried the exact permission
+ * this needs (instagram_manage_comments), which points at a System User
+ * token limitation on this edge rather than a missing scope. Reading
+ * individual customer comments is also a "listening" feature, outside the
+ * read-only Social Media Analytics scope this dashboard is deliberately
+ * kept to. Revisit only with a genuine reason to fetch comment text, and
+ * test against a real (non-System-User) token first.
  */
 export async function fetchComments(
   mediaIds: Array<{ id: string; profile: string; permalink: string }>,
@@ -133,8 +140,15 @@ export async function fetchHashtags(
   return rows.sort((a, b) => b.totalLikes - a.totalLikes);
 }
 
-/** Media that tagged your account (`/tags`). Mentions in captions/comments
- * arrive by webhook rather than query, so this covers tagged media only. */
+/**
+ * NOT CALLED from meta.ts. Kept for reference, not dead by accident.
+ *
+ * Media that tagged your account (`/tags`). Answered (#10) "no permission"
+ * on every token tried across all three brands' Meta portfolios — the
+ * signature of a capability gated behind Meta App Review, not a checkbox
+ * missed during token generation. Mentions in captions/comments arrive by
+ * webhook rather than query, so this only ever covered tagged media.
+ */
 export async function fetchMentions(
   igUserId: string,
   label: string,
