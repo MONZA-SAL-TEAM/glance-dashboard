@@ -441,7 +441,7 @@ async function instagramPosts(
  */
 const pageTokens = new Map<string, Promise<string | null>>();
 
-function pageToken(
+export function pageToken(
   pageId: string,
   label: string,
   userToken: string,
@@ -522,7 +522,7 @@ export function discoverIgUserId(
 
 const permissionCache = new Map<string, Promise<string[]>>();
 
-function missingPagePermissions(token: string): Promise<string[]> {
+export function missingPagePermissions(token: string): Promise<string[]> {
   const key = token.slice(-12);
   const cached = permissionCache.get(key);
   if (cached) return cached;
@@ -560,7 +560,7 @@ function missingPagePermissions(token: string): Promise<string[]> {
  * Only a measure whose every candidate failed is worth reporting, and the
  * note then names them all rather than just the last one tried.
  */
-async function facebookMetric(
+export async function facebookMetric(
   pageId: string,
   candidates: string[],
   label: string,
