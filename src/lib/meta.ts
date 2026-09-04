@@ -638,6 +638,43 @@ async function facebookProfile(
   //
   // Reported only when actually missing, so the note names the fix instead of
   // leaving four cryptic errors to interpret.
+  // TEMPORARY probe — what scopes were actually baked into this token, and
+  // when was it issued? Never logs the token itself.
+  //
+  // Business Settings now shows @mherolebanon owned by M Hero Lebanon and
+  // assigned to a system user with Full access, yet discovery still finds
+  // nothing. Assigning a NEW asset to a system user does not retroactively
+  // add scopes to a token already issued — a token's granted permissions are
+  // fixed at generation time. If instagram_basic was not checked when this
+  // token was created, the asset being newly assigned changes nothing until
+  // a fresh token is generated.
+  const dbgNotes: string[] = [];
+  const dbg = await attempt(`${cfg.label} · token debug`, dbgNotes, () =>
+    graph<{
+      data?: {
+        user_id?: string;
+        app_id?: string;
+        issued_at?: number;
+        expires_at?: number;
+        scopes?: string[];
+        is_valid?: boolean;
+      };
+    }>("debug_token", { input_token: cfg.token }, cfg.token),
+  );
+  if (dbg?.data) {
+    const d = dbg.data;
+    const issued = d.issued_at
+      ? new Date(d.issued_at * 1000).toISOString().slice(0, 10)
+      : "unknown";
+    const hasIgBasic = (d.scopes ?? []).includes("instagram_basic");
+    notes.push(
+      `${cfg.label} · token debug — user_id=${d.user_id ?? "?"} issued=${issued} ` +
+        `valid=${d.is_valid} instagram_basic=${hasIgBasic} scopes=${(d.scopes ?? []).join(",")}`,
+    );
+  } else if (dbgNotes.length) {
+    notes.push(`${cfg.label} · token debug failed — ${dbgNotes.join(" · ")}`);
+  }
+
   const missing = await missingPagePermissions(cfg.token);
   const canReadInsights = !missing.includes("read_insights");
   if (missing.length) {
