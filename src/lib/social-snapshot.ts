@@ -1,5 +1,11 @@
 import { format, subDays } from "date-fns";
-import { attempt, graph, metaProfiles, type MetaProfileConfig } from "./meta";
+import {
+  attempt,
+  discoverIgUserId,
+  graph,
+  metaProfiles,
+  type MetaProfileConfig,
+} from "./meta";
 import { supabaseRpc } from "./signals";
 import { CANONICAL_MODELS } from "./sites";
 
@@ -654,7 +660,17 @@ export async function runSocialSnapshot(): Promise<{
   const since = isoDay(subDays(now, CAPTURE_DAYS));
   const until = today;
 
-  for (const cfg of profiles) {
+  for (const rawCfg of profiles) {
+    // Same rule as the live Social view: an explicitly configured id always
+    // wins, discovery only fills a gap. Without this the warehouse writer
+    // stayed silent forever on any brand whose Instagram was never pasted
+    // into META_PROFILES_* — the exact gap that let MHERO backfill nothing
+    // while the live view (which already had discovery) showed a clear note.
+    let cfg = rawCfg;
+    if (!cfg.igUserId && cfg.pageId) {
+      const found = await discoverIgUserId(cfg.pageId, cfg.token, payload.notes);
+      if (found) cfg = { ...cfg, igUserId: found };
+    }
     if (cfg.igUserId) {
       await instagramSnapshot(cfg, since, until, today, payload);
     }

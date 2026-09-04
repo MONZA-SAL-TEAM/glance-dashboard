@@ -507,7 +507,7 @@ const igDiscoveryCache = new Map<string, Promise<string | undefined>>();
  * the brand's Instagram appears on the next load with no config change.
  * Returns undefined when nothing is linked; the caller says so.
  */
-function discoverIgUserId(
+export function discoverIgUserId(
   pageId: string,
   token: string,
   notes: string[],
