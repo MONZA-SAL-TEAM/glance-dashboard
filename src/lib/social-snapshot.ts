@@ -2,8 +2,11 @@ import { format, subDays } from "date-fns";
 import {
   attempt,
   discoverIgUserId,
+  facebookMetric,
   graph,
   metaProfiles,
+  missingPagePermissions,
+  pageToken,
   type MetaProfileConfig,
 } from "./meta";
 import { supabaseRpc } from "./signals";
@@ -605,6 +608,8 @@ async function instagramSnapshot(
 
 async function facebookSnapshot(
   cfg: MetaProfileConfig,
+  since: string,
+  until: string,
   today: string,
   out: SnapshotPayload,
 ): Promise<void> {
@@ -618,14 +623,63 @@ async function facebookSnapshot(
       cfg.token,
     ),
   );
+  const followers = page?.followers_count ?? page?.fan_count;
 
-  out.profile_daily.push({
-    profile_key: key,
-    day: today,
-    brand: cfg.brand,
-    network: "facebook",
-    followers: page?.followers_count ?? page?.fan_count,
-  });
+  // Reach/engagement need read_insights, and this warehouse writer had never
+  // requested either — it wrote followers only, from the day the snapshot
+  // engine was first built. That went unnoticed because Facebook reach was
+  // broken everywhere anyway (the read_insights gap), so there was nothing
+  // visibly missing. Now that a real token exists, port the same capture the
+  // live Social view already does, rather than let the warehouse quietly
+  // know less than the page that reads from it.
+  const missing = await missingPagePermissions(cfg.token);
+  if (missing.includes("read_insights")) {
+    out.profile_daily.push({
+      profile_key: key,
+      day: today,
+      brand: cfg.brand,
+      network: "facebook",
+      followers,
+    });
+    return;
+  }
+
+  const token = await pageToken(id, cfg.label, cfg.token, out.notes);
+  const [reachEntry, engagedEntry] = await Promise.all([
+    facebookMetric(
+      id,
+      ["page_total_media_view_unique", "page_media_view"],
+      cfg.label,
+      since,
+      until,
+      token,
+      out.notes,
+    ),
+    facebookMetric(
+      id,
+      ["page_post_engagements", "page_total_actions"],
+      cfg.label,
+      since,
+      until,
+      token,
+      out.notes,
+    ),
+  ]);
+  const reachByDay = seriesByDay(reachEntry);
+  const engagedByDay = seriesByDay(engagedEntry);
+
+  const days = new Set([...reachByDay.keys(), ...engagedByDay.keys(), today]);
+  for (const day of days) {
+    out.profile_daily.push({
+      profile_key: key,
+      day,
+      brand: cfg.brand,
+      network: "facebook",
+      followers: day === today ? followers : undefined,
+      reach: reachByDay.get(day),
+      accounts_engaged: engagedByDay.get(day),
+    });
+  }
 }
 
 /**
@@ -675,7 +729,7 @@ export async function runSocialSnapshot(): Promise<{
       await instagramSnapshot(cfg, since, until, today, payload);
     }
     if (cfg.pageId) {
-      await facebookSnapshot(cfg, today, payload);
+      await facebookSnapshot(cfg, since, until, today, payload);
     }
   }
 
