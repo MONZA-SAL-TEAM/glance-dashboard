@@ -1,12 +1,6 @@
 import { format, subDays } from "date-fns";
 import { fetchAds } from "./meta-ads";
-import {
-  fetchCompetitors,
-  fetchComments,
-  fetchHashtags,
-  fetchMentions,
-  listeningConfig,
-} from "./meta-listening";
+import { fetchCompetitors, fetchHashtags, listeningConfig } from "./meta-listening";
 import { rangeDays } from "./ranges";
 import type {
   AdsSummary,
@@ -903,33 +897,32 @@ export async function fetchSocial(
   allPosts.sort((a, b) => b.interactions - a.interactions);
   const topPosts = allPosts.slice(0, 20);
 
-  // Paid, listening and benchmarking run alongside each other; each already
-  // records its own failures, so one dead area never blocks the others.
+  // Paid and benchmarking run alongside each other; each already records
+  // its own failures, so one dead area never blocks the others.
+  //
+  // comments and tagged-media (mentions) are NOT called here. Both were
+  // tried against every token generated across VOYAH, MHERO and Monza —
+  // three separate Meta portfolios, three different permission sets — and
+  // both failed identically every time. Tagged media (`/tags`) answered
+  // (#10) "no permission" on all of them, which is what a capability
+  // genuinely gated behind Meta App Review looks like, not a missing
+  // checkbox. Comments answered (#200) "provide valid app ID" even on the
+  // one token that DID carry instagram_manage_comments, pointing at a
+  // System User token limitation on that edge rather than a scope gap.
+  // Chasing more permissions has three times today turned out to mean a
+  // silently incomplete token, so calls proven unfixable by evidence are
+  // removed rather than left to fail on every load. Reading individual
+  // customer comment text and who tagged the account are also "listening"
+  // features rather than the analytics this dashboard is scoped to.
   const { hashtags: wantedTags, competitors: wantedCompetitors } =
     listeningConfig();
   const firstIg = profiles.find((p) => p.igUserId);
 
-  const [ads, comments, hashtags, mentions, competitors] = await Promise.all([
+  const [ads, hashtags, competitors] = await Promise.all([
     fetchAds(profiles, since, until, notes),
-    fetchComments(
-      topPosts
-        .filter((p) => p.network === "instagram")
-        .slice(0, 8)
-        .map((p) => ({ id: p.id, profile: p.profile, permalink: p.permalink })),
-      firstIg?.token ?? "",
-      notes,
-    ),
     firstIg && wantedTags.length
       ? fetchHashtags(firstIg.igUserId as string, wantedTags, firstIg.token, notes)
       : Promise.resolve([] as HashtagRow[]),
-    firstIg
-      ? fetchMentions(
-          firstIg.igUserId as string,
-          firstIg.label,
-          firstIg.token,
-          notes,
-        )
-      : Promise.resolve([] as MentionRow[]),
     firstIg && wantedCompetitors.length
       ? fetchCompetitors(
           firstIg.igUserId as string,
@@ -939,6 +932,8 @@ export async function fetchSocial(
         )
       : Promise.resolve([] as CompetitorRow[]),
   ]);
+  const comments: SocialComment[] = [];
+  const mentions: MentionRow[] = [];
 
   return {
     range,
